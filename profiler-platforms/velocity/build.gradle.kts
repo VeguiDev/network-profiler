@@ -11,6 +11,8 @@ dependencies {
     compileOnly(libs.packetevents)
     testImplementation(libs.netty)
     testImplementation(libs.slf4j)
+    testImplementation(libs.packetevents)
+    testImplementation(libs.velocity)
 }
 tasks.shadowJar {
     archiveBaseName.set("minecraft-network-profiler-velocity")

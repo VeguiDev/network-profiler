@@ -62,6 +62,12 @@ class TrafficProfilerTest {
         assertFalse(sample.traffic().inbound().available()); assertNull(sample.traffic().inbound().totalBytes());
         assertNull(sample.traffic().combinedTotalBytes());
     }
+    @Test void storesRealPlayerCountsWithHistoryAndDoesNotInventZeroOnProviderFailure() {
+        var clock = new Clock(); var profiler = new TrafficProfiler(900, true, true, clock);
+        profiler.playerCount(() -> 7); clock.advance(1000); assertEquals(7, profiler.sample().players());
+        profiler.playerCount(() -> { throw new IllegalStateException("Unavailable"); }); clock.advance(1000);
+        assertNull(profiler.sample().players()); assertEquals(7, profiler.history().getFirst().players());
+    }
     @Test void invalidConfigurationAndDuplicateProvidersAreRejected() {
         assertThrows(IllegalArgumentException.class, () -> new TrafficProfiler(0, true, true));
         var profiler = new TrafficProfiler(900, true, true);
@@ -80,6 +86,8 @@ class TrafficProfilerTest {
         var latch = new CountDownLatch(1); profiler.subscribe(s -> { thread.set(Thread.currentThread()); latch.countDown(); });
         profiler.start(); assertTrue(latch.await(4, TimeUnit.SECONDS)); assertTrue(profiler.healthy());
         profiler.close(); profiler.close(); assertEquals("STOPPED", profiler.state());
+        // Executor termination can be signalled just before the worker Thread.run() returns.
+        thread.get().join(2000);
         assertFalse(thread.get().isAlive());
         assertThrows(IllegalStateException.class, profiler::start);
     }

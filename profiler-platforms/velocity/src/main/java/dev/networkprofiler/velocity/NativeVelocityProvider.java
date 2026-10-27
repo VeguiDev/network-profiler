@@ -16,7 +16,7 @@ final class NativeVelocityProvider implements MetricProvider {
     private final AtomicBoolean active = new AtomicBoolean(true);
     private Object holder;
     private Method getter, setter;
-    private ChannelInitializer<Channel> original, wrapper;
+    private ClientInitializer wrapper;
     NativeVelocityProvider(Object proxy, TrafficProfiler profiler) {
         this.proxy = proxy; this.profiler = profiler; instrumentation = new ChannelInstrumentation(profiler);
     }
@@ -30,28 +30,39 @@ final class NativeVelocityProvider implements MetricProvider {
         setter = holder.getClass().getMethod("set", ChannelInitializer.class);
         Object candidate = getter.invoke(holder);
         if (!(candidate instanceof ChannelInitializer<?>)) throw new IllegalStateException("Unexpected client initializer type");
-        original = (ChannelInitializer<Channel>) candidate;
-        // Do not invoke protected initChannel reflectively. A registered channel executes an added initializer immediately.
-        wrapper = new ChannelInitializer<>() {
-            @Override protected void initChannel(Channel channel) {
-                channel.pipeline().addLast(original);
-                if (!active.get()) return;
-                boolean decoder = channel.pipeline().toMap().values().stream().anyMatch(handler ->
-                        handler.getClass().getName().equals("com.velocitypowered.proxy.protocol.netty.MinecraftDecoder"));
-                if (!decoder) { profiler.fail("Client pipeline did not match validated Velocity 4.3.0 layout"); return; }
-                try { instrumentation.install(channel); }
-                catch (RuntimeException failure) { profiler.fail("Client instrumentation failed: " + failure.getMessage()); }
-            }
-        };
+        wrapper = new ClientInitializer((ChannelInitializer<Channel>) candidate, profiler, instrumentation, active);
         setter.invoke(holder, wrapper);
         if (getter.invoke(holder) != wrapper) throw new IllegalStateException("Client initializer replacement was not retained");
+    }
+    /** Mutable delegate lets PacketEvents 2.14 unwrap its own initializer without replacing ours. */
+    private static final class ClientInitializer extends ChannelInitializer<Channel> {
+        private volatile ChannelInitializer<Channel> delegate;
+        private final TrafficProfiler profiler;
+        private final ChannelInstrumentation instrumentation;
+        private final AtomicBoolean active;
+        ClientInitializer(ChannelInitializer<Channel> delegate, TrafficProfiler profiler,
+                          ChannelInstrumentation instrumentation, AtomicBoolean active) {
+            this.delegate = delegate; this.profiler = profiler;
+            this.instrumentation = instrumentation; this.active = active;
+        }
+        @Override protected void initChannel(Channel channel) {
+            // Do not invoke protected initChannel reflectively. A registered channel executes an added initializer immediately.
+            channel.pipeline().addLast(delegate);
+            if (!active.get()) return;
+            boolean decoder = channel.pipeline().toMap().values().stream().anyMatch(handler ->
+                    handler.getClass().getName().equals("com.velocitypowered.proxy.protocol.netty.MinecraftDecoder"));
+            if (!decoder) { profiler.fail("Client pipeline did not match validated Velocity 4.3.0 layout"); return; }
+            try { instrumentation.install(channel); }
+            catch (RuntimeException failure) { profiler.fail("Client instrumentation failed: " + failure.getMessage()); }
+        }
     }
     @Override public void close() {
         active.set(false);
         if (holder != null && wrapper != null) {
             try {
                 // Never overwrite an initializer installed by another plugin after ours.
-                if (getter.invoke(holder) == wrapper) setter.invoke(holder, original);
+                // Use the current delegate: another plugin may already have unwrapped itself.
+                if (getter.invoke(holder) == wrapper) setter.invoke(holder, wrapper.delegate);
             } catch (ReflectiveOperationException failure) { profiler.fail("Could not restore client initializer"); }
         }
         instrumentation.close();

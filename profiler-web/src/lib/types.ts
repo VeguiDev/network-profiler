@@ -2,6 +2,7 @@ export type Direction = { available: boolean; totalBytes: string | null; bytesPe
 export type Snapshot = {
   sessionId: string; sequence: number; timestamp: number; intervalMs: number; uptimeMs: number
   traffic: { inbound: Direction; outbound: Direction; combinedTotalBytes: string | null }
+  players?: number | null
 }
 export type TrafficHistory = { sessionId: string; samples: Snapshot[] }
 export type Status = {

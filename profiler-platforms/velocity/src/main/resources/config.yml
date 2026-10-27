@@ -10,6 +10,8 @@ http:
   allowed-hosts: ["127.0.0.1", "localhost", "[::1]"]
   allowed-origins: []
   max-websocket-clients: 16
+  # Authenticated reverse proxy origin used for links in game. Does not change bind address.
+  public-base-url: ""
 
 traffic:
   enabled: true
@@ -17,3 +19,21 @@ traffic:
   track-outbound: true
   # native is standalone. packetevents requires the external PacketEvents plugin.
   channel-provider: "native"
+
+captures:
+  # Packet analysis requires external PacketEvents 2.14.0 installed on Velocity.
+  enabled: true
+  max-duration-seconds: 900
+  max-reports: 50
+  retention-days: 7
+  max-attribution-rows: 10000
+  max-timeline-entries: 10000
+  max-timeline-samples: 3602
+
+# Lightweight protocol-byte counters, not packet-type analysis. Requires external PacketEvents.
+statistics:
+  enabled: true
+  interval-seconds: 30
+  max-connections: 10000
+  max-servers: 1000
+  disconnected-retention-seconds: 900

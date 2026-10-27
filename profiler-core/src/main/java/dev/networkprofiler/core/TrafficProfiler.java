@@ -18,6 +18,9 @@ public final class TrafficProfiler implements TrafficSource, AutoCloseable {
     private ScheduledExecutorService scheduler;
     private Thread samplerThread;
     private boolean closed;
+    private volatile java.util.function.Supplier<Integer> playerCount = () -> null;
+    public void playerCount(java.util.function.Supplier<Integer> supplier) { playerCount = Objects.requireNonNull(supplier); }
+    private Integer players() { try { return playerCount.get(); } catch (RuntimeException unavailable) { return null; } }
 
     private static final class Session implements TrafficCollector {
         final String id = UUID.randomUUID().toString();
@@ -69,7 +72,7 @@ public final class TrafficProfiler implements TrafficSource, AutoCloseable {
         var snapshot = new TrafficSnapshot(s.id, ++s.sequence, clock.epochMillis(), elapsed / 1_000_000d,
                 (now - s.started) / 1_000_000, new TrafficSnapshot.Traffic(
                 direction(inbound, in, inRate, s.peakIn), direction(outbound, out, outRate, s.peakOut),
-                inbound && outbound ? java.math.BigInteger.valueOf(in).add(java.math.BigInteger.valueOf(out)).toString() : null));
+                inbound && outbound ? java.math.BigInteger.valueOf(in).add(java.math.BigInteger.valueOf(out)).toString() : null), players());
         s.sampled = now; s.previousIn = in; s.previousOut = out;
         current = snapshot; history.add(snapshot, now);
         for (var listener : listeners) {

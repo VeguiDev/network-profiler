@@ -9,6 +9,7 @@ http:
   host: "127.0.0.1"
   port: 8765
   allowed-hosts: ["127.0.0.1", "localhost", "profiler.example.com"]
+  public-base-url: "https://profiler.example.com"
 ```
 
 In nginx's `http` context:
@@ -43,4 +44,4 @@ server {
 
 Serve the dashboard at the origin root. The application uses absolute `/api/v1/...` paths. WebSocket Origin and the forwarded Host must identify the same authority; use `allowed-origins` only for explicitly trusted alternate origins, not `*`. The application does not trust forwarded headers as an authentication mechanism.
 
-Basic auth does not provide individual profiler accounts or authorization roles. For stronger control use your existing SSO/access gateway with WebSocket support. For personal access an SSH tunnel avoids exposing the service at all.
+Capture start/stop and settings POSTs also validate Origin and `X-MNP-CSRF`. Preserve browser Origin and the normal custom header; do not strip authentication from `/api/v1/captures` or `/api/v1/settings`. Origin/CSRF validation does not replace authentication. Basic auth does not provide individual profiler accounts or authorization roles: anyone permitted through this proxy can start/stop captures and edit shared visual bandwidth settings. For stronger control use your existing SSO/access gateway with WebSocket support. For personal access an SSH tunnel avoids exposing the service at all.

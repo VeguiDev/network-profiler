@@ -7,5 +7,6 @@ profiler-web/dist/
 *.iml
 .DS_Store
 *.tsbuildinfo
+__pycache__/
 .env*
 !.env.example

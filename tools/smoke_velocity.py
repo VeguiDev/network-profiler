@@ -60,7 +60,7 @@ def read_frame(sock):
     return read_exact(sock, length), prefix + length
 
 
-def exchange(mc_port, proxy_protocol=False):
+def exchange(mc_port, proxy_protocol=False, packets=None):
     host = b"localhost"
     handshake = b"\x00" + varint(769) + varint(len(host)) + host + struct.pack(">H", mc_port) + b"\x01"
     request = varint(len(handshake)) + handshake + b"\x01\x00"
@@ -74,7 +74,31 @@ def exchange(mc_port, proxy_protocol=False):
         sock.sendall(ping)
         pong, pong_bytes = read_frame(sock)
         assert pong == ping[1:], "Ping response changed"
+    if packets is not None:
+        for key, size in [(('HANDSHAKING', 'INBOUND', 'HANDSHAKE'), len(handshake)),
+                          (('STATUS', 'INBOUND', 'REQUEST'), 1), (('STATUS', 'INBOUND', 'PING'), 9),
+                          (('STATUS', 'OUTBOUND', 'RESPONSE'), len(response)), (('STATUS', 'OUTBOUND', 'PONG'), len(pong))]:
+            previous = packets.setdefault(key, [0, 0])
+            previous[0] += size
+            previous[1] += 1
     return len(request) + len(ping), received + pong_bytes
+
+
+def shutdown(process, http_port, log_path):
+    if process.poll() is None:
+        process.stdin.write("shutdown\n")
+        process.stdin.flush()
+        try:
+            process.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            process.wait(timeout=5)
+            raise RuntimeError("Velocity did not stop cleanly")
+    assert process.returncode == 0, f"Velocity exit code {process.returncode}; see {log_path}"
+    assert "Failed to uninject during termination" not in log_path.read_text(), f"Initializer cleanup failed; see {log_path}"
+    with socket.socket() as sock:
+        sock.settimeout(1)
+        assert sock.connect_ex(("127.0.0.1", http_port)) != 0, "HTTP port still open"
 
 
 def main():
@@ -83,8 +107,13 @@ def main():
     parser.add_argument("--plugin", type=Path, required=True)
     parser.add_argument("--packetevents", type=Path)
     parser.add_argument("--proxy-protocol", action="store_true")
+    parser.add_argument("--channel-provider", choices=("native", "packetevents"))
+    parser.add_argument("--packet-capture", action="store_true", help="Test real per-type captures, UI/command sharing and immutable persistence (requires PacketEvents)")
     parser.add_argument("--hold-seconds", type=int, default=0)
     args = parser.parse_args()
+    if (args.packet_capture or args.channel_provider == "packetevents") and not args.packetevents:
+        parser.error("Packet captures / PacketEvents discovery require --packetevents")
+    provider = args.channel_provider or ("packetevents" if args.packetevents else "native")
     assert hashlib.sha256(args.velocity_jar.read_bytes()).hexdigest() == VELOCITY_SHA256, "Expected Velocity 4.3.0 build 44"
     directory = Path(tempfile.mkdtemp(prefix="velocity-profiler-", dir="/tmp/opencode"))
     plugins = directory / "plugins"
@@ -102,7 +131,7 @@ def main():
     (directory / "velocity.toml").write_text(config)
     data = plugins / "networkprofiler"
     data.mkdir()
-    (data / "config.yml").write_text(f"http:\n  port: {http_port}\ntraffic:\n  channel-provider: {'packetevents' if args.packetevents else 'native'}\n")
+    (data / "config.yml").write_text(f"http:\n  port: {http_port}\ntraffic:\n  channel-provider: {provider}\n")
     log_path = directory / "smoke.log"
     with log_path.open("w") as log:
         process = subprocess.Popen(["java", "-Xms128m", "-Xmx512m", "-jar", str(args.velocity_jar.resolve())],
@@ -111,6 +140,13 @@ def main():
 
         def get(path):
             with urllib.request.urlopen(root + path, timeout=3) as response:
+                return json.load(response)
+
+        def post(path, body=None):
+            token = get("/api/v1/captures")["csrfToken"]
+            request = urllib.request.Request(root + path, json.dumps(body or {}).encode(),
+                                            {"Content-Type": "application/json", "Origin": root, "X-MNP-CSRF": token}, method="POST")
+            with urllib.request.urlopen(request, timeout=5) as response:
                 return json.load(response)
 
         try:
@@ -130,9 +166,15 @@ def main():
                     raise RuntimeError(f"Startup timeout: {log_path.read_text()}")
                 time.sleep(0.2)
             before = get("/api/v1/traffic/current")
+            capture = None
+            expected_packets = {} if args.packet_capture else None
+            if args.packet_capture:
+                index = get("/api/v1/captures")
+                assert index["available"], index["detail"]
+                capture = post("/api/v1/captures", {"durationSeconds": 60})
             sent = received = 0
             for _ in range(12):
-                incoming, outgoing = exchange(mc_port, args.proxy_protocol)
+                incoming, outgoing = exchange(mc_port, args.proxy_protocol, expected_packets)
                 sent += incoming
                 received += outgoing
             time.sleep(1.3)
@@ -141,29 +183,77 @@ def main():
             actual_out = int(after["traffic"]["outbound"]["totalBytes"]) - int(before["traffic"]["outbound"]["totalBytes"])
             assert (actual_in, actual_out) == (sent, received), f"Byte mismatch: {(actual_in, actual_out)} != {(sent, received)}"
             assert get("/api/v1/traffic/history")["samples"], "History missing"
+            if capture:
+                report = get("/api/v1/captures/" + capture["id"])
+                actual_packets = {(r["protocolState"], r["direction"], r["name"]): [int(r["totalBytes"]), int(r["packetCount"])] for r in report["packets"]}
+                assert actual_packets == expected_packets, f"Packet mismatch: {actual_packets} != {expected_packets}"
+                assert report["state"] == "RUNNING" and report["observationErrors"] == "0", report
+                assert int(report["packetCount"]) == 60 and report["cancelledPackets"] == "0", report
+                assert report["schemaVersion"] == 3 and report["timeline"]["samples"], report
+                assert after["players"] == 0, "Status sockets were incorrectly counted as players"
+                # Real console command stops the capture started by the dashboard API.
+                process.stdin.write("mnp stop\n")
+                process.stdin.flush()
+                stop_deadline = time.monotonic() + 5
+                while True:
+                    final = get("/api/v1/captures/" + capture["id"])
+                    if final["state"] == "COMPLETED":
+                        break
+                    assert time.monotonic() < stop_deadline, f"Command failed to stop: {log_path.read_text()}"
+                    time.sleep(0.05)
+                assert final["packets"] == report["packets"], "Final report counters changed unexpectedly"
+                assert sum(int(s["inboundBytes"]) + int(s["outboundBytes"]) for s in final["timeline"]["samples"]) == int(final["totalBytes"]), final
+                assert json.loads((data / "reports" / (capture["id"] + ".json")).read_text()) == final
+                exchange(mc_port, args.proxy_protocol)
+                assert get("/api/v1/captures/" + capture["id"]) == final, "Completed report was modified by later traffic"
+                # And the inverse: start by command, stop through HTTP.
+                process.stdin.write("mnp start 30\n")
+                process.stdin.flush()
+                start_deadline = time.monotonic() + 5
+                while True:
+                    active = [r for r in get("/api/v1/captures")["reports"] if r["state"] == "RUNNING"]
+                    if active:
+                        break
+                    assert time.monotonic() < start_deadline, f"Command failed to start: {log_path.read_text()}"
+                    time.sleep(0.05)
+                exchange(mc_port, args.proxy_protocol)
+                second = post("/api/v1/captures/" + active[0]["id"] + "/stop")
+                assert second["packetCount"] == "5", second
+                assert second["id"] != final["id"] and second["state"] == "COMPLETED", second
+                saved_settings = post("/api/v1/settings", {"inboundMbps": 100, "outboundMbps": 50})["bandwidth"]
             with urllib.request.urlopen(root, timeout=3) as response:
                 assert b"Network Profiler" in response.read(), "Dashboard missing"
             print(json.dumps({"result": "PASS", "dashboard": root, "inboundBytes": actual_in,
-                              "outboundBytes": actual_out, "provider": "packetevents" if args.packetevents else "native",
+                              "outboundBytes": actual_out, "provider": provider,
+                              "packetCapture": {"packetCount": report["packetCount"], "totalBytes": report["totalBytes"], "types": len(report["packets"]), "reportId": report["id"]} if capture else None,
                               "proxyProtocol": args.proxy_protocol, "log": str(log_path)}, indent=2), flush=True)
             end = time.monotonic() + args.hold_seconds
             while time.monotonic() < end:
                 exchange(mc_port, args.proxy_protocol)
                 time.sleep(1)
         finally:
-            if process.poll() is None:
-                process.stdin.write("shutdown\n")
-                process.stdin.flush()
-                try:
-                    process.wait(timeout=20)
-                except subprocess.TimeoutExpired:
-                    process.terminate()
-                    process.wait(timeout=5)
-                    raise RuntimeError("Velocity did not stop cleanly")
-            assert process.returncode == 0, f"Velocity exit code {process.returncode}; see {log_path}"
-            with socket.socket() as sock:
-                sock.settimeout(1)
-                assert sock.connect_ex(("127.0.0.1", http_port)) != 0, "HTTP port still open"
+            shutdown(process, http_port, log_path)
+    if args.packet_capture:
+        with log_path.open("a") as log:
+            process = subprocess.Popen(["java", "-Xms128m", "-Xmx512m", "-jar", str(args.velocity_jar.resolve())],
+                                       cwd=directory, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True)
+            try:
+                deadline = time.monotonic() + 45
+                while True:
+                    try:
+                        if get("/api/v1/health")["healthy"] and get("/api/v1/captures")["available"]:
+                            break
+                    except (OSError, ValueError):
+                        pass
+                    assert process.poll() is None and time.monotonic() < deadline, f"Restart failed: {log_path.read_text()}"
+                    time.sleep(0.2)
+                assert get("/api/v1/captures/" + final["id"]) == final, "Final report changed or disappeared after restart"
+                assert get("/api/v1/captures/" + second["id"]) == second, "Second report missing after restart"
+                assert not any(r["state"] == "RUNNING" for r in get("/api/v1/captures")["reports"]), "Capture resumed unexpectedly"
+                assert get("/api/v1/settings")["bandwidth"] == saved_settings, "Shared settings changed after restart"
+            finally:
+                shutdown(process, http_port, log_path)
+        print("Report persistence across a real Velocity restart verified.")
     print("Clean shutdown verified. Play/login/chunks still require a real backend and client.")
 
 

@@ -1,0 +1,48 @@
+import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { ArrowLeft, ArrowRight, Clock3, Search } from 'lucide-react'
+import { getJson } from '@/lib/types'
+import { percentage, serverName, type CaptureIndex, type CaptureScope, type DirectionTab } from '@/lib/captures'
+import { rate, total } from '@/lib/format'
+import { Card } from './ui/card'
+import { Button } from './ui/button'
+import { CaptureControls } from './packet-reports'
+
+export type StatisticsRow = { id: string; playerId: string | null; playerName: string | null; serverId: string; active: boolean; connections: number;
+  inboundBytes: string; outboundBytes: string; totalBytes: string; intervalInboundBytes: string; intervalOutboundBytes: string; inboundBytesPerSecond: number | null; outboundBytesPerSecond: number | null }
+export type StatisticsPage = { available: boolean; detail: string; timestamp: number; intervalMs: number; ready: boolean; complete: boolean; observationErrors: string; untrackedBytes: string;
+  intervalInboundBytes: string; intervalOutboundBytes: string; total: number; page: number; pageSize: number; rows: StatisticsRow[] }
+
+export function EntityStatistics({ path, index, navigate }: { path: string; index?: CaptureIndex; navigate: (p: string) => void }) {
+  const [section, encodedId] = path.slice(1).split('/')
+  const id = encodedId ? decodeURIComponent(encodedId) : undefined
+  const server = section === 'servers', player = section === 'players'
+  const title = server ? 'Servers' : player ? 'Player details' : 'Connections'
+  const [page, setPage] = useState(0), [search, setSearch] = useState(''), [query, setQuery] = useState(''), [direction, setDirection] = useState<DirectionTab>('BOTH')
+  useEffect(() => { setPage(0); setSearch(''); setQuery('') }, [path])
+  useEffect(() => { const timer = setTimeout(() => { setQuery(search); setPage(0) }, 250); return () => clearTimeout(timer) }, [search])
+  const params = new URLSearchParams({ page: String(page), pageSize: '50', q: query })
+  const endpoint = `/api/v1/${section}${id ? `/${encodeURIComponent(id)}` : ''}?${params}`
+  const response = useQuery({ queryKey: ['statistics', endpoint], queryFn: ({ signal }) => getJson<StatisticsPage>(endpoint, signal), refetchInterval: 30000, retry: 1 })
+  const data = response.data, rows = data?.rows ?? []
+  const detail = !!id
+  const scope: CaptureScope = { type: server ? 'SERVER' : player ? 'PLAYER' : 'CONNECTION', id }
+  const label = server && id ? serverName(id) : player ? rows[0]?.playerName ?? id : rows[0]?.playerName ?? id
+  const denominator = data ? direction === 'INBOUND' ? data.intervalInboundBytes : direction === 'OUTBOUND' ? data.intervalOutboundBytes : String(BigInt(data.intervalInboundBytes) + BigInt(data.intervalOutboundBytes)) : '0'
+  const related = useQuery({ queryKey: ['server-connections', id], queryFn: ({ signal }) => getJson<StatisticsPage>(`/api/v1/connections?serverId=${encodeURIComponent(id!)}&pageSize=50`, signal), enabled: server && detail, refetchInterval: 30000, retry: 1 })
+  const bytes = (r: StatisticsRow) => direction === 'INBOUND' ? r.intervalInboundBytes : direction === 'OUTBOUND' ? r.intervalOutboundBytes : String(BigInt(r.intervalInboundBytes) + BigInt(r.intervalOutboundBytes))
+  return <div className="space-y-6">
+    {detail && <Button variant="ghost" onClick={() => navigate(server ? '/servers' : '/connections')}><ArrowLeft />Back to {server ? 'servers' : 'connections'}</Button>}
+    <div className="flex flex-wrap items-start justify-between gap-4"><div><h1 className="break-all text-3xl font-semibold tracking-tight">{detail ? label ?? title : title}</h1><p className="mt-2 text-sm text-muted-foreground">{detail ? `${server ? 'Server' : player ? 'Player' : 'Connection'} details · ` : ''}Lightweight protocol statistics · average over the last {data?.intervalMs ? (data.intervalMs / 1000).toFixed(1) : '30'} s</p>{id && <p className="mt-2 break-all font-mono text-xs text-muted-foreground">{id}</p>}</div><span className="flex items-center gap-2 text-xs text-muted-foreground"><Clock3 size={14} />{data?.ready ? `Updated ${new Date(data.timestamp).toLocaleTimeString()}` : 'Collecting first interval…'}</span></div>
+    {response.isError ? <p role="alert" className="rounded-lg bg-amber-500/10 p-4 text-sm">Statistics unavailable. The entity may have expired or the service is offline.</p> : data && (!data.available || !data.ready) ? <p role="status" className="rounded-lg bg-muted p-4 text-sm text-muted-foreground">{data.detail}</p> : null}
+    {data?.ready && (!data.complete || !data.available) && <p role="status" className="rounded-lg bg-amber-500/10 p-4 text-sm">Coverage incomplete or source unavailable; displayed data may be stale. Observation errors: {data.observationErrors} · Untracked: {total(data.untrackedBytes)}.</p>}
+    {detail && <CaptureControls index={index} navigate={navigate} scope={scope} label={label ?? id} />}
+    <Card className="overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-3 p-5"><div aria-label="Statistics direction" className="flex gap-1 rounded-lg bg-muted p-1">{(['BOTH', 'INBOUND', 'OUTBOUND'] as const).map(d => <Button key={d} size="sm" variant={direction === d ? 'secondary' : 'ghost'} aria-pressed={direction === d} onClick={() => setDirection(d)}>{d === 'BOTH' ? 'BOTH' : d === 'INBOUND' ? 'Inbound' : 'Outbound'}</Button>)}</div>{!detail && <label className="flex items-center gap-2 text-muted-foreground"><Search size={15} /><input aria-label="Search entities" placeholder="Search name, server or ID…" className="h-9 min-w-0 rounded-lg border border-input bg-background px-3 text-sm" value={search} onChange={e => setSearch(e.target.value)} /></label>}</div>
+      <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead className="border-y border-border/50 bg-muted/30 text-muted-foreground"><tr>{[server ? 'Server' : 'Player / connection', server ? 'Connections' : 'Associated server', 'IN avg', 'OUT avg', 'Interval bytes', 'Share', 'Observed total', ''].map((h, i) => <th key={i} className="whitespace-nowrap px-5 py-3 font-medium">{h}</th>)}</tr></thead><tbody>{rows.map(r => <tr className="border-b border-border/40 last:border-0" key={r.id}><td className="px-5 py-4"><button className="text-left font-medium text-primary hover:underline" onClick={() => navigate(`/${server ? 'servers' : 'connections'}/${encodeURIComponent(r.id)}`)}>{server ? serverName(r.id) : r.playerName ?? 'Anonymous connection'}</button>{!server && <p className="mt-1 font-mono text-[10px] text-muted-foreground">{r.id.slice(0, 8)} · {r.active ? 'Connected' : 'Disconnected'}</p>}</td><td className="px-5 py-4">{server ? r.connections : <button className="text-primary hover:underline" onClick={() => navigate(`/servers/${encodeURIComponent(r.serverId)}`)}>{serverName(r.serverId)}</button>}</td><td className="whitespace-nowrap px-5 py-4 tabular-nums text-inbound">{direction === 'OUTBOUND' ? '—' : rate(r.inboundBytesPerSecond, 'bytes')}</td><td className="whitespace-nowrap px-5 py-4 tabular-nums text-outbound">{direction === 'INBOUND' ? '—' : rate(r.outboundBytesPerSecond, 'bytes')}</td><td className="px-5 py-4 tabular-nums" title={`${bytes(r)} B`}>{total(bytes(r))}</td><td className="px-5 py-4 tabular-nums">{percentage(bytes(r), denominator)}%</td><td className="px-5 py-4 tabular-nums" title="Server totals: since statistics started. Connection totals: since it was first observed.">{total(r.totalBytes)}</td><td className="px-5 py-4"><div className="flex gap-2"><Button size="sm" variant="ghost" onClick={() => navigate(`/${server ? 'servers' : 'connections'}/${encodeURIComponent(r.id)}`)}>Details<ArrowRight size={12} /></Button>{!server && r.playerId && <Button size="sm" variant="ghost" onClick={() => navigate(`/players/${encodeURIComponent(r.playerId!)}`)}>Player</Button>}</div></td></tr>)}</tbody></table></div>
+      {!rows.length && <p className="p-8 text-center text-sm text-muted-foreground">{data?.ready ? 'No matching entities retained.' : 'Waiting for statistics…'}</p>}
+      {(data?.total ?? 0) > 50 && <div className="flex items-center justify-end gap-3 border-t border-border/50 p-4 text-xs"><Button size="sm" variant="ghost" disabled={!page} onClick={() => setPage(page - 1)}>Previous</Button>{page + 1} / {Math.ceil(data!.total / 50)}<Button size="sm" variant="ghost" disabled={(page + 1) * 50 >= data!.total} onClick={() => setPage(page + 1)}>Next</Button></div>}
+    </Card>
+    {server && detail && <Card className="p-5"><h2 className="mb-3 text-sm font-medium">Currently associated connections</h2><p className="mb-3 text-xs text-muted-foreground">Their connection totals can include previous servers. Use a scoped capture for historical attribution.</p><div className="flex flex-wrap gap-2">{(related.data?.rows ?? []).map(r => <Button size="sm" variant="outline" key={r.id} onClick={() => navigate(`/connections/${r.id}`)}>{r.playerName ?? r.id.slice(0, 8)} · {r.active ? 'Connected' : 'Disconnected'}</Button>)}</div>{(related.data?.total ?? 0) > 50 && <p className="mt-3 text-xs text-muted-foreground">Showing 50 of {related.data!.total}; search the Connections view for more.</p>}</Card>}
+    <p className="text-xs leading-relaxed text-muted-foreground">IN: player → proxy. OUT: proxy → player. Bytes are packet ID + payload observed before compression/encryption, not successful transport writes. Server association is not proof of packet origin. Shares use the full retained {server ? 'server' : 'connection'} interval, not the search result. Statistics are in memory; disconnected connections expire. Detailed packet analysis runs only on demand.</p>
+  </div>
+}
