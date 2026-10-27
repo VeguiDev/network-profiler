@@ -1,0 +1,11 @@
+.gradle/
+.playwright-mcp/
+**/build/
+**/node_modules/
+profiler-web/dist/
+.idea/
+*.iml
+.DS_Store
+*.tsbuildinfo
+.env*
+!.env.example

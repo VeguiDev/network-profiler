@@ -1,0 +1,20 @@
+[versions]
+velocity = "4.3.0"
+netty = "4.2.19.Final"
+javalin = "7.2.4"
+jackson = "3.2.4"
+slf4j = "2.0.20"
+junit = "6.1.3"
+packetevents = "2.14.0"
+
+[libraries]
+velocity = { module = "com.velocitypowered:velocity-api", version.ref = "velocity" }
+netty = { module = "io.netty:netty-handler", version.ref = "netty" }
+javalin = { module = "io.javalin:javalin", version.ref = "javalin" }
+jackson = { module = "tools.jackson.core:jackson-databind", version.ref = "jackson" }
+slf4j = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
+junit = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
+packetevents = { module = "com.github.retrooper:packetevents-api", version.ref = "packetevents" }
+
+[plugins]
+shadow = { id = "com.gradleup.shadow", version = "9.6.1" }

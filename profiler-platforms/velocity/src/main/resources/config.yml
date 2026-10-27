@@ -1,0 +1,19 @@
+profiler:
+  enabled: true
+  sampling-interval-ms: 1000
+  history-duration-seconds: 900
+
+http:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8765
+  allowed-hosts: ["127.0.0.1", "localhost", "[::1]"]
+  allowed-origins: []
+  max-websocket-clients: 16
+
+traffic:
+  enabled: true
+  track-inbound: true
+  track-outbound: true
+  # native is standalone. packetevents requires the external PacketEvents plugin.
+  channel-provider: "native"
