@@ -102,6 +102,7 @@ def shutdown(process, http_port, log_path):
 
 
 def main():
+    from smoke_remote import HostedRelay, RemoteDashboard
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--velocity-jar", type=Path, required=True)
     parser.add_argument("--plugin", type=Path, required=True)
@@ -110,6 +111,7 @@ def main():
     parser.add_argument("--channel-provider", choices=("native", "packetevents"))
     parser.add_argument("--packet-capture", action="store_true", help="Test real per-type captures, UI/command sharing and immutable persistence (requires PacketEvents)")
     parser.add_argument("--hold-seconds", type=int, default=0)
+    parser.add_argument("--cloudflare", action="store_true", help="Use local Wrangler Durable Objects instead of Node")
     args = parser.parse_args()
     if (args.packet_capture or args.channel_provider == "packetevents") and not args.packetevents:
         parser.error("Packet captures / PacketEvents discovery require --packetevents")
@@ -118,7 +120,7 @@ def main():
     directory = Path(tempfile.mkdtemp(prefix="velocity-profiler-", dir="/tmp/opencode"))
     plugins = directory / "plugins"
     plugins.mkdir()
-    shutil.copy2(args.plugin, plugins / "network-profiler.jar")
+    shutil.copy2(args.plugin, plugins / "vnp.jar")
     if args.packetevents:
         shutil.copy2(args.packetevents, plugins / "packetevents.jar")
     mc_port, http_port = port(), port()
@@ -129,27 +131,18 @@ def main():
     if args.proxy_protocol:
         config = config.replace("haproxy-protocol = false", "haproxy-protocol = true")
     (directory / "velocity.toml").write_text(config)
-    data = plugins / "networkprofiler"
+    data = plugins / "vnp"
     data.mkdir()
-    (data / "config.yml").write_text(f"http:\n  port: {http_port}\ntraffic:\n  channel-provider: {provider}\n")
+    relay = HostedRelay(directory, http_port, args.cloudflare)
+    (data / "config.yml").write_text(relay.config() + f"traffic:\n  channel-provider: {provider}\n")
     log_path = directory / "smoke.log"
     with log_path.open("w") as log:
         process = subprocess.Popen(["java", "-Xms128m", "-Xmx512m", "-jar", str(args.velocity_jar.resolve())],
                                    cwd=directory, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True)
-        root = f"http://127.0.0.1:{http_port}"
-
-        def get(path):
-            with urllib.request.urlopen(root + path, timeout=3) as response:
-                return json.load(response)
-
-        def post(path, body=None):
-            token = get("/api/v1/captures")["csrfToken"]
-            request = urllib.request.Request(root + path, json.dumps(body or {}).encode(),
-                                            {"Content-Type": "application/json", "Origin": root, "X-MNP-CSRF": token}, method="POST")
-            with urllib.request.urlopen(request, timeout=5) as response:
-                return json.load(response)
-
+        dashboard = None
         try:
+            dashboard = RemoteDashboard(relay, process, log_path)
+            root, get, post = dashboard.root, dashboard.get, dashboard.post
             deadline = time.monotonic() + 45
             while True:
                 if process.poll() is not None:
@@ -192,7 +185,7 @@ def main():
                 assert report["schemaVersion"] == 3 and report["timeline"]["samples"], report
                 assert after["players"] == 0, "Status sockets were incorrectly counted as players"
                 # Real console command stops the capture started by the dashboard API.
-                process.stdin.write("mnp stop\n")
+                process.stdin.write("vnp stop\n")
                 process.stdin.flush()
                 stop_deadline = time.monotonic() + 5
                 while True:
@@ -207,7 +200,7 @@ def main():
                 exchange(mc_port, args.proxy_protocol)
                 assert get("/api/v1/captures/" + capture["id"]) == final, "Completed report was modified by later traffic"
                 # And the inverse: start by command, stop through HTTP.
-                process.stdin.write("mnp start 30\n")
+                process.stdin.write("vnp start 30\n")
                 process.stdin.flush()
                 start_deadline = time.monotonic() + 5
                 while True:
@@ -222,7 +215,7 @@ def main():
                 assert second["id"] != final["id"] and second["state"] == "COMPLETED", second
                 saved_settings = post("/api/v1/settings", {"inboundMbps": 100, "outboundMbps": 50})["bandwidth"]
             with urllib.request.urlopen(root, timeout=3) as response:
-                assert b"Network Profiler" in response.read(), "Dashboard missing"
+                assert b"Vegui Network Profiler" in response.read(), "Dashboard missing"
             print(json.dumps({"result": "PASS", "dashboard": root, "inboundBytes": actual_in,
                               "outboundBytes": actual_out, "provider": provider,
                               "packetCapture": {"packetCount": report["packetCount"], "totalBytes": report["totalBytes"], "types": len(report["packets"]), "reportId": report["id"]} if capture else None,
@@ -232,12 +225,18 @@ def main():
                 exchange(mc_port, args.proxy_protocol)
                 time.sleep(1)
         finally:
-            shutdown(process, http_port, log_path)
+            shutdown(process, mc_port, log_path)
+            if dashboard:
+                assert dashboard.request('/session', proxy=False)['serverConnected'] is False
+                assert dashboard.get('/api/v1/traffic/history')['samples'], 'Offline temporary history missing'
+                dashboard.close()
     if args.packet_capture:
         with log_path.open("a") as log:
             process = subprocess.Popen(["java", "-Xms128m", "-Xmx512m", "-jar", str(args.velocity_jar.resolve())],
                                        cwd=directory, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True)
             try:
+                dashboard = RemoteDashboard(relay, process, log_path)
+                get, post = dashboard.get, dashboard.post
                 deadline = time.monotonic() + 45
                 while True:
                     try:
@@ -252,9 +251,11 @@ def main():
                 assert not any(r["state"] == "RUNNING" for r in get("/api/v1/captures")["reports"]), "Capture resumed unexpectedly"
                 assert get("/api/v1/settings")["bandwidth"] == saved_settings, "Shared settings changed after restart"
             finally:
-                shutdown(process, http_port, log_path)
+                shutdown(process, mc_port, log_path)
+                dashboard.close()
         print("Report persistence across a real Velocity restart verified.")
-    print("Clean shutdown verified. Play/login/chunks still require a real backend and client.")
+    relay.close()
+    print("Outgoing relay, browser approval, offline history and clean shutdown verified. Full gameplay remains manual.")
 
 
 if __name__ == "__main__":

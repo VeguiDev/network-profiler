@@ -13,6 +13,7 @@ import type { CaptureIndex } from '@/lib/captures'
 import { EntityStatistics } from '@/components/entity-statistics'
 import { SettingsPage } from '@/components/settings'
 import type { Settings } from '@/lib/settings'
+import { dashboardPath, localPath } from '@/lib/remote'
 
 const navigation = [
   { name: 'Overview', icon: LayoutDashboard, available: true },
@@ -20,9 +21,9 @@ const navigation = [
   { name: 'Servers', icon: Server, available: true }, { name: 'Settings', icon: Settings2, available: true },
 ]
 export default function App({ live }: { live: LiveTraffic }) {
-  const [path, setPath] = useState(window.location.pathname)
-  const navigate = (next: string) => { window.history.pushState(null, '', next); setPath(next); setMenu(false) }
-  useEffect(() => { const pop = () => setPath(window.location.pathname); window.addEventListener('popstate', pop); return () => window.removeEventListener('popstate', pop) }, [])
+  const [path, setPath] = useState(localPath)
+  const navigate = (next: string) => { window.history.pushState(null, '', dashboardPath(next)); setPath(next); setMenu(false) }
+  useEffect(() => { const pop = () => setPath(localPath()); window.addEventListener('popstate', pop); return () => window.removeEventListener('popstate', pop) }, [])
   const reportsPage = path === '/reports' || path.startsWith('/reports/')
   const entitiesPage = /^\/(servers|connections|players)(\/|$)/.test(path)
   const section = path === '/settings' ? 'Settings' : reportsPage ? 'Reports' : entitiesPage ? path.startsWith('/servers') ? 'Servers' : 'Connections' : 'Overview'
@@ -35,10 +36,10 @@ export default function App({ live }: { live: LiveTraffic }) {
   const frozen = useRef<Snapshot[]>([])
   const [series, setSeries] = useState({ inbound: true, outbound: true })
   const [menu, setMenu] = useState(false)
-  const [dark, setDark] = useState(() => localStorage.getItem('network-profiler-theme') !== 'light')
+  const [dark, setDark] = useState(() => localStorage.getItem('vnp-theme') !== 'light')
   const status = useQuery({ queryKey: ['status'], queryFn: ({ signal }) => getJson<Status>('/api/v1/status', signal), refetchInterval: 5000, retry: 1 })
   useEffect(() => { live.start(); return live.stop }, [live])
-  useEffect(() => { document.documentElement.classList.toggle('dark', dark); localStorage.setItem('network-profiler-theme', dark ? 'dark' : 'light') }, [dark])
+  useEffect(() => { document.documentElement.classList.toggle('dark', dark); localStorage.setItem('vnp-theme', dark ? 'dark' : 'light') }, [dark])
   const displayed = paused ? frozen.current : state.samples
   const current = displayed.at(-1)
   const traffic = current?.traffic
@@ -54,7 +55,7 @@ export default function App({ live }: { live: LiveTraffic }) {
   return <div className="min-h-screen bg-background text-foreground">
     {menu && <button aria-label="Close navigation overlay" className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={() => setMenu(false)} />}
     <aside className={cn('fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-border/60 bg-sidebar px-4 py-6 transition-transform lg:translate-x-0', menu ? 'translate-x-0' : '-translate-x-full')}>
-      <a href="/" className="mb-10 flex items-center gap-3 px-2" aria-label="Network Profiler home"><span className="flex size-9 items-center justify-center rounded-xl bg-primary/15 text-primary"><Network size={21} /></span><span className="text-sm font-semibold tracking-tight">Network Profiler<span className="mt-0.5 block text-[10px] font-normal uppercase tracking-[0.18em] text-muted-foreground">Minecraft observability</span></span></a>
+      <a href={dashboardPath('/')} className="mb-10 flex items-center gap-3 px-2" aria-label="Vegui Network Profiler home"><span className="flex size-9 items-center justify-center rounded-xl bg-primary/15 text-primary"><Network size={21} /></span><span className="text-sm font-semibold tracking-tight">Vegui Network Profiler<span className="mt-0.5 block text-[10px] font-normal uppercase tracking-[0.18em] text-muted-foreground">Minecraft observability</span></span></a>
       <div className="mb-3 px-3 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Workspace</div>
       <nav aria-label="Main navigation" className="space-y-1">{navigation.map(item => { const selected = item.name === section; return <button key={item.name} disabled={!item.available} aria-current={selected ? 'page' : undefined} title={item.available ? undefined : 'Not available in this release'} onClick={() => navigate(item.name === 'Overview' ? '/' : `/${item.name.toLowerCase()}`)} className={cn('flex h-10 w-full items-center gap-3 rounded-lg px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring', selected ? 'bg-primary/10 font-medium text-primary' : 'text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60')}><item.icon size={17} />{item.name}{!item.available && <span className="ml-auto text-[9px] uppercase tracking-wider">Soon</span>}</button> })}</nav>
       <div className="mt-auto px-2"><div className="flex items-center justify-between text-[11px] text-muted-foreground"><span>Open source · v{status.data?.version ?? '0.1.0'}</span><Activity size={13} /></div></div>
@@ -62,6 +63,8 @@ export default function App({ live }: { live: LiveTraffic }) {
     <div className="lg:ml-60">
       <header className="flex h-17 items-center justify-between border-b border-border/60 px-5 sm:px-8 lg:px-10"><div className="flex items-center gap-3 text-xs text-muted-foreground"><Button variant="ghost" size="icon" className="lg:hidden" aria-label="Open navigation" onClick={() => setMenu(true)}><Menu /></Button><span>Workspace</span><ChevronRight size={12} /><span className="text-foreground">{section}</span></div><div className="flex items-center gap-4"><span className="hidden items-center gap-1.5 text-xs text-muted-foreground sm:flex"><Server size={13} />{status.data?.platform ?? 'Velocity'}</span><Button variant="ghost" size="icon" aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'} onClick={() => setDark(!dark)}>{dark ? <Sun /> : <Moon />}</Button></div></header>
       <main className="mx-auto max-w-[1600px] space-y-7 px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
+        {state.viewer && (!state.viewer.serverConnected || state.connection !== 'Connected') && <div role="alert" className="rounded-lg bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">Minecraft is disconnected. Retained statistics are stale, not zero. Operations are disabled until reconnection.{state.viewer.expiresAt && ` Session expires ${new Date(state.viewer.expiresAt).toLocaleTimeString()}.`}</div>}
+        <div className="min-w-0 space-y-7">
         {path === '/settings' ? <SettingsPage /> : reportsPage ? <PacketReports id={path.split('/')[2]} index={captureIndex.data} navigate={navigate} /> : entitiesPage ? <EntityStatistics path={path} index={captureIndex.data} navigate={navigate} /> : <>
         <div className="flex flex-wrap items-start justify-between gap-4"><div><div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-primary"><Radio size={13} />Live telemetry</div><h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Network Overview</h1><p className="mt-2 text-sm text-muted-foreground">A clear view of your proxy’s network traffic.</p></div><div role="status" aria-live="polite" className="flex items-center gap-2 rounded-full bg-muted px-3 py-2 text-xs"><span className={cn('size-1.5 rounded-full', connected ? 'bg-primary' : 'bg-amber-400')} />{state.connection}{paused && <span className="text-muted-foreground">· Paused</span>}</div></div>
         {(!operational && status.data || status.isError || !connected || state.historyError) && <div role="status" className="rounded-lg bg-amber-500/8 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">{status.isError ? 'Service unavailable. Displayed data may be stale.' : status.data && !operational ? `${status.data.state}: ${status.data.detail}` : !connected ? 'Live stream unavailable. Reconnecting automatically; displayed values may be stale.' : 'History recovery failed; retrying while live collection continues.'}</div>}
@@ -75,6 +78,7 @@ export default function App({ live }: { live: LiveTraffic }) {
         <div className="grid gap-4 md:grid-cols-3"><Card className="flex items-center gap-4 px-5 py-4"><span className="rounded-lg bg-muted p-2.5 text-muted-foreground"><Activity size={17} /></span><div><p className="text-[11px] text-muted-foreground">Combined transferred</p><p className="mt-1 text-sm font-medium tabular-nums">{total(traffic?.combinedTotalBytes)}</p></div></Card><Card className="flex items-center gap-4 px-5 py-4"><span className="rounded-lg bg-muted p-2.5 text-muted-foreground"><Clock3 size={17} /></span><div><p className="text-[11px] text-muted-foreground">Session uptime</p><p className="mt-1 text-sm font-medium tabular-nums">{current ? uptime(current.uptimeMs) : '—'}</p></div></Card><Card className="flex items-center gap-4 px-5 py-4"><span className="rounded-lg bg-muted p-2.5 text-muted-foreground"><Server size={17} /></span><div className="min-w-0"><p className="text-[11px] text-muted-foreground">Platform</p><p className="mt-1 truncate text-sm font-medium">{status.data ? `${status.data.platform} ${status.data.platformVersion}` : 'Waiting for service'}</p></div></Card></div>
         <footer className="flex items-start gap-2 text-[11px] leading-relaxed text-muted-foreground"><CircleHelp size={13} className="mt-0.5 shrink-0" /><p>Client ↔ proxy transport bytes. Outbound counts successful writes, not client acknowledgements. TCP/IP overhead and backend connections are excluded.</p></footer>
         </>}
+        </div>
       </main>
     </div>
   </div>

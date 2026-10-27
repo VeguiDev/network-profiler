@@ -3,15 +3,11 @@ profiler:
   sampling-interval-ms: 1000
   history-duration-seconds: 900
 
-http:
+relay:
   enabled: true
-  host: "127.0.0.1"
-  port: 8765
-  allowed-hosts: ["127.0.0.1", "localhost", "[::1]"]
-  allowed-origins: []
-  max-websocket-clients: 16
-  # Authenticated reverse proxy origin used for links in game. Does not change bind address.
-  public-base-url: ""
+  # Outgoing only. Host the Hono relay and Astro web on this origin.
+  endpoint: "https://vnp.vegui.dev"
+  public-web-url: "https://vnp.vegui.dev"
 
 traffic:
   enabled: true

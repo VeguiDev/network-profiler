@@ -1,8 +1,9 @@
 import { QueryClient } from '@tanstack/react-query'
 import { getJson, isSnapshot, type Snapshot, type TrafficHistory } from './types'
+import { currentViewer, sessionPath, updateViewer, type ViewerSession } from './remote'
 
 export type Connection = 'Connected' | 'Reconnecting' | 'Disconnected'
-export type LiveState = { samples: Snapshot[]; connection: Connection; historyError: boolean }
+export type LiveState = { samples: Snapshot[]; connection: Connection; historyError: boolean; viewer?: ViewerSession; expired?: boolean }
 export function mergeSamples(existing: Snapshot[], incoming: Snapshot[], sessionId: string): Snapshot[] {
   const bySequence = new Map<number, Snapshot>()
   for (const s of [...existing, ...incoming]) if (s.sessionId === sessionId && isSnapshot(s)) bySequence.set(s.sequence, s)
@@ -23,6 +24,7 @@ export class LiveTraffic {
   private attempts = 0
   private session?: string
   constructor(private query: QueryClient) {}
+  setViewer = (viewer: ViewerSession) => { updateViewer(viewer); this.update({ viewer }) }
   getSnapshot = () => this.state
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   private update(patch: Partial<LiveState>) { this.state = { ...this.state, ...patch }; this.listeners.forEach(fn => fn()) }
@@ -38,15 +40,35 @@ export class LiveTraffic {
     if (!this.running) return
     const generation = ++this.generation
     this.update({ connection: this.attempts >= 6 ? 'Disconnected' : 'Reconnecting' })
-    const url = new URL('/api/v1/live', window.location.href)
+    const remote = !!currentViewer()
+    const url = new URL(remote ? sessionPath('events') : '/api/v1/live', window.location.href)
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
     const ws = this.socket = new WebSocket(url)
     let lastFrame = Date.now(), recoveredSession: string | undefined
-    const stale = this.stale = setInterval(() => { if (Date.now() - lastFrame > 6000) ws.close() }, 2000)
+    const stale = this.stale = setInterval(() => {
+      if (Date.now() - lastFrame > (remote ? 45_000 : 6000)) ws.close()
+      else if (remote && ws.readyState === 1) ws.send(JSON.stringify({ type: 'heartbeat' }))
+    }, remote ? 10_000 : 2000)
     ws.onmessage = event => {
       if (!this.running || generation !== this.generation) return
       let message: unknown
       try { message = JSON.parse(String(event.data)) } catch { ws.close(1008, 'Invalid JSON'); return }
+      if (remote && (message as { type?: string })?.type === 'relay.state') {
+        const viewer = message as ViewerSession
+        lastFrame = Date.now(); this.attempts = 0
+        const previous = this.state.viewer
+        if (previous?.bootId && viewer.bootId !== previous.bootId) {
+          this.session = undefined; recoveredSession = undefined
+          this.query.clear(); this.update({ samples: [] })
+        }
+        this.setViewer(viewer)
+        this.update({ connection: viewer.serverConnected ? 'Connected' : 'Disconnected' })
+        if (viewer.state === 'APPROVED' && (!previous || previous.state !== 'APPROVED' || previous.serverConnected !== viewer.serverConnected || recoveredSession === undefined)) {
+          recoveredSession = 'recovering'
+          void this.recover(generation).then(() => { recoveredSession = this.session }).catch(() => { recoveredSession = undefined })
+        }
+        return
+      }
       if (!isSnapshot(message) || (message as { type?: string }).type !== 'traffic.snapshot') { ws.close(1008, 'Invalid snapshot'); return }
       lastFrame = Date.now(); this.attempts = 0
       if (this.session !== message.sessionId) { this.session = message.sessionId; this.update({ samples: [] }) }
@@ -57,21 +79,34 @@ export class LiveTraffic {
       }
     }
     ws.onerror = () => ws.close()
-    ws.onclose = () => {
+    ws.onclose = event => {
       clearInterval(stale)
       if (!this.running || generation !== this.generation) return
+      if (event?.code === 4001) { this.running = false; this.update({ connection: 'Disconnected', expired: true }); return }
       this.attempts++
       this.update({ connection: this.attempts >= 6 ? 'Disconnected' : 'Reconnecting' })
       const delay = Math.min(30_000, 500 * 2 ** Math.min(this.attempts - 1, 6)) * (0.8 + Math.random() * 0.4)
-      this.retry = setTimeout(() => this.connect(), delay)
+      this.retry = setTimeout(() => {
+        if (!remote) { this.connect(); return }
+        void fetch(sessionPath('session'), { credentials: 'same-origin', cache: 'no-store' }).then(async response => {
+          if (!this.running || generation !== this.generation) return
+          if ([401, 403, 410].includes(response.status)) { this.running = false; this.update({ expired: true }); return }
+          this.connect()
+        }).catch(() => this.connect())
+      }, delay)
     }
   }
-  private async recover(generation: number, session: string) {
+  private async recover(generation: number, session?: string) {
+    const startingSession = this.session
     try {
       await this.query.cancelQueries({ queryKey: ['traffic-history'] })
       const history = await this.query.fetchQuery({ queryKey: ['traffic-history'], staleTime: 0, retry: false,
         queryFn: ({ signal }) => getJson<TrafficHistory>('/api/v1/traffic/history', signal) })
-      if (!this.running || generation !== this.generation || session !== this.session) return
+      if (!this.running || generation !== this.generation || session && session !== this.session || !session && this.session !== startingSession) return
+      if (!session) {
+        if (!history.sessionId) { this.update({ historyError: false }); return }
+        this.session = session = history.sessionId
+      }
       if (history.sessionId !== session || !Array.isArray(history.samples)) throw new Error('Session changed during recovery')
       this.update({ historyError: false, samples: mergeSamples(this.state.samples, history.samples, session) })
     } catch (error) {

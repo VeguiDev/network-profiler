@@ -1,5 +1,6 @@
 import { getJson } from './types'
 import type { Timeline } from './report-timeline'
+import { apiFetch, currentViewer } from './remote'
 
 export type PacketRow = { name: string; protocolState: string; direction: 'INBOUND' | 'OUTBOUND'; totalBytes: string; packetCount: string; cancelledPackets: string; modifiedPackets: string }
 export type CaptureScope = { type: 'GLOBAL' | 'SERVER' | 'PLAYER' | 'CONNECTION'; id?: string | null }
@@ -36,8 +37,8 @@ export function packetRows(report: PacketReport, direction: DirectionTab, search
 }
 export async function mutateCapture(path: string, body: Record<string, unknown> = {}): Promise<PacketReport> {
   // Fetch a current token so a proxy restart cannot leave an old page with an unusable token.
-  const index = await getJson<CaptureIndex>('/api/v1/captures')
-  const response = await fetch(path, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-MNP-CSRF': index.csrfToken }, body: JSON.stringify(body) })
+  const token = currentViewer()?.csrfToken ?? (await getJson<CaptureIndex>('/api/v1/captures')).csrfToken
+  const response = await apiFetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-VNP-CSRF': token }, body: JSON.stringify(body) })
   if (!response.ok) throw new Error(`Capture request failed (${response.status}): ${(await response.text()).slice(0, 300)}`)
   return response.json() as Promise<PacketReport>
 }

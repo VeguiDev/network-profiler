@@ -15,7 +15,7 @@ it('saves separate shared visual references with a fresh CSRF token and supports
   fireEvent.click(screen.getByText('Save settings'))
   await screen.findByText('Settings saved for all dashboard users.')
   const post = fetch.mock.calls.find(c => c[1]?.method === 'POST')!
-  expect(post[1]?.headers).toMatchObject({ 'X-MNP-CSRF': 'fresh' }); expect(JSON.parse(post[1]?.body as string)).toEqual({ inboundMbps: 100, outboundMbps: 50 })
+  expect(new Headers(post[1]?.headers).get('X-VNP-CSRF')).toBe('fresh'); expect(JSON.parse(post[1]?.body as string)).toEqual({ inboundMbps: 100, outboundMbps: 50 })
   fireEvent.change(screen.getByLabelText('Inbound maximum (Mbps)'), { target: { value: '' } })
   fireEvent.click(screen.getByText('Save settings'))
   await waitFor(() => expect(query.getQueryData(['settings'])).toMatchObject({ bandwidth: { inboundMbps: null, outboundMbps: 50 } }))

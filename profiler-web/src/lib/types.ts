@@ -10,7 +10,7 @@ export type Status = {
   platform: string; platformVersion: string; version: string; sessionId: string; uptimeMs: number; capabilities: string[]
 }
 export async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(path, { signal, cache: 'no-store' })
+  const response = await apiFetch(path, { signal })
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   return response.json() as Promise<T>
 }
@@ -25,3 +25,4 @@ export function isSnapshot(value: unknown): value is Snapshot {
     && Number.isFinite(s.timestamp) && Number.isFinite(s.intervalMs) && Number.isFinite(s.uptimeMs)
     && !!s.traffic && validDirection(s.traffic.inbound) && validDirection(s.traffic.outbound)
 }
+import { apiFetch } from './remote'

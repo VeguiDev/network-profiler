@@ -11,7 +11,17 @@ export const TrafficChart = memo(function TrafficChart({ samples = [], points, b
   const data = useMemo(() => {
     const source = points ?? samples.filter(s => s.sequence > 0).map(s => ({ timestamp: s.timestamp, inbound: s.traffic.inbound.bytesPerSecond, outbound: s.traffic.outbound.bytesPerSecond, interval: s.intervalMs, globalPlayers: s.players }))
     const end = source.at(-1)?.timestamp ?? Date.now()
-    return source.filter(s => s.timestamp > end - minutes * 60_000)
+    const visible = source.filter(s => s.timestamp > end - minutes * 60_000)
+    const measured: GraphPoint[] = []
+    for (const point of visible) {
+      const previous = measured.at(-1)
+      // A missing relay interval is unknown, not a measured zero or a continuous line.
+      // A genuinely long measured interval already covers its own elapsed time.
+      if (previous && point.timestamp - previous.timestamp > Math.max(5000, point.interval * 2))
+        measured.push({ timestamp: previous.timestamp + 1, interval: 0, inbound: null, outbound: null, globalPlayers: null, localPlayers: null })
+      measured.push(point)
+    }
+    return measured
   }, [samples, points, minutes])
   const inLimit = bandwidthBytes(bandwidth?.inboundMbps), outLimit = bandwidthBytes(bandwidth?.outboundMbps)
   const last = data.at(-1), exceeded = inLimit !== null && (last?.inbound ?? 0) > inLimit || outLimit !== null && (last?.outbound ?? 0) > outLimit

@@ -1,11 +1,13 @@
 {
-  "name": "minecraft-network-profiler-web",
+  "name": "vegui-network-profiler-web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "engines": { "node": ">=24.15.0" },
-  "scripts": { "dev": "vite --host 127.0.0.1", "build": "tsc -b && vite build", "test": "vitest run", "preview": "vite preview --host 127.0.0.1" },
+  "scripts": { "dev": "astro dev --host 127.0.0.1", "build": "tsc -b && astro build", "test": "vitest run", "preview": "astro preview --host 127.0.0.1" },
   "dependencies": {
+    "astro": "7.4.2",
+    "@astrojs/react": "7.1.1",
     "@radix-ui/react-slot": "1.5.0",
     "@tanstack/react-query": "5.105.0",
     "class-variance-authority": "0.7.1",

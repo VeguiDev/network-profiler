@@ -17,10 +17,18 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: profiler-web/package-lock.json
+          cache-dependency-path: |
+            profiler-web/package-lock.json
+            profiler-backend/package-lock.json
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew build
+      - run: npm run check:cloudflare
+        working-directory: profiler-backend
       - uses: actions/upload-artifact@v4
         with:
           name: velocity-plugin
-          path: profiler-platforms/velocity/build/libs/minecraft-network-profiler-velocity-0.1.0.jar
+          path: profiler-platforms/velocity/build/libs/vegui-network-profiler-velocity-0.1.0.jar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hosted-dashboard
+          path: profiler-web/dist

@@ -2,7 +2,7 @@ plugins { `java-library`; alias(libs.plugins.shadow) }
 dependencies {
     implementation(project(":profiler-core"))
     implementation(project(":profiler-netty"))
-    implementation(project(":profiler-server"))
+    implementation(project(":profiler-relay"))
     implementation("org.yaml:snakeyaml:2.7")
     compileOnly(libs.velocity)
     annotationProcessor(libs.velocity)
@@ -15,7 +15,7 @@ dependencies {
     testImplementation(libs.velocity)
 }
 tasks.shadowJar {
-    archiveBaseName.set("minecraft-network-profiler-velocity")
+    archiveBaseName.set("vegui-network-profiler-velocity")
     archiveClassifier.set("")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     mergeServiceFiles()
@@ -24,15 +24,12 @@ tasks.shadowJar {
     }
     exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "module-info.class", "META-INF/versions/**/module-info.class")
     dependencies { exclude(dependency("org.slf4j:slf4j-api:.*")) }
-    relocate("io.javalin", "dev.networkprofiler.internal.javalin")
-    relocate("org.eclipse.jetty", "dev.networkprofiler.internal.jetty")
-    relocate("jakarta.servlet", "dev.networkprofiler.internal.servlet")
-    relocate("tools.jackson", "dev.networkprofiler.internal.jackson")
-    relocate("com.fasterxml.jackson", "dev.networkprofiler.internal.jacksonannotations")
-    relocate("org.yaml.snakeyaml", "dev.networkprofiler.internal.yaml")
-    relocate("kotlin", "dev.networkprofiler.internal.kotlin")
-    relocate("org.intellij", "dev.networkprofiler.internal.intellij")
-    relocate("org.jetbrains", "dev.networkprofiler.internal.jetbrains")
+    relocate("tools.jackson", "dev.vegui.vnp.internal.jackson")
+    relocate("com.fasterxml.jackson", "dev.vegui.vnp.internal.jacksonannotations")
+    relocate("org.yaml.snakeyaml", "dev.vegui.vnp.internal.yaml")
+    relocate("kotlin", "dev.vegui.vnp.internal.kotlin")
+    relocate("org.intellij", "dev.vegui.vnp.internal.intellij")
+    relocate("org.jetbrains", "dev.vegui.vnp.internal.jetbrains")
 }
 tasks.jar { archiveClassifier.set("thin") }
 tasks.assemble { dependsOn(tasks.shadowJar) }

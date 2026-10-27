@@ -1,7 +1,7 @@
 plugins { base; alias(libs.plugins.shadow) apply false }
 
 allprojects {
-    group = "dev.networkprofiler"
+    group = "dev.vegui.vnp"
     version = "0.1.0"
     repositories {
         mavenCentral()
@@ -39,7 +39,7 @@ val frontendBuild = tasks.register<Exec>("frontendBuild") {
     workingDir("profiler-web")
     commandLine(npmCommand("run", "build"))
     inputs.dir("profiler-web/src")
-    inputs.files(fileTree("profiler-web") { include("*.json", "*.ts", "index.html") })
+    inputs.files(fileTree("profiler-web") { include("*.json", "*.ts", "*.mjs") })
     outputs.dir("profiler-web/dist")
 }
 val frontendTest = tasks.register<Exec>("frontendTest") {
@@ -47,8 +47,18 @@ val frontendTest = tasks.register<Exec>("frontendTest") {
     workingDir("profiler-web")
     commandLine(npmCommand("test"))
 }
-tasks.named("check") { dependsOn(frontendTest, subprojects.map { it.tasks.named("check") }) }
-tasks.named("assemble") { dependsOn(":profiler-platforms:velocity:shadowJar") }
+val backendInstall = tasks.register<Exec>("backendInstall") {
+    workingDir("profiler-backend"); commandLine(npmCommand("ci", "--no-audit", "--no-fund"))
+    inputs.files("profiler-backend/package.json", "profiler-backend/package-lock.json"); outputs.dir("profiler-backend/node_modules")
+}
+val backendBuild = tasks.register<Exec>("backendBuild") {
+    dependsOn(backendInstall); workingDir("profiler-backend"); commandLine(npmCommand("run", "build"))
+}
+val backendTest = tasks.register<Exec>("backendTest") {
+    dependsOn(backendInstall); workingDir("profiler-backend"); commandLine(npmCommand("test"))
+}
+tasks.named("check") { dependsOn(frontendTest, backendBuild, backendTest, subprojects.map { it.tasks.named("check") }) }
+tasks.named("assemble") { dependsOn(":profiler-platforms:velocity:shadowJar", frontendBuild) }
 tasks.wrapper {
     gradleVersion = "9.8.2"
     distributionSha256Sum = "21bd5da2de49b642904077f38c0efdc7778e92b3ed0889392dca61b97e389607"

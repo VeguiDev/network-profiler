@@ -3,6 +3,10 @@
 **/build/
 **/node_modules/
 profiler-web/dist/
+profiler-backend/dist/
+profiler-web/.astro/
+**/.wrangler/
+profiler-backend/data/
 .idea/
 *.iml
 .DS_Store

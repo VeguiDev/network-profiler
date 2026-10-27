@@ -17,7 +17,9 @@ it('starts on demand with CSRF and opens the live report', async () => {
   render(<QueryClientProvider client={query}><CaptureControls index={index} navigate={navigate} /></QueryClientProvider>)
   fireEvent.click(screen.getByText('Start analysis'))
   await waitFor(() => expect(navigate).toHaveBeenCalledWith('/reports/abc'))
-  expect(fetch.mock.calls[1][1]).toMatchObject({ method: 'POST', headers: { 'X-MNP-CSRF': 'token', 'Content-Type': 'application/json' } })
+  expect(fetch.mock.calls[1][1]).toMatchObject({ method: 'POST' })
+  expect(new Headers(fetch.mock.calls[1][1]?.headers).get('X-VNP-CSRF')).toBe('token')
+  expect(new Headers(fetch.mock.calls[1][1]?.headers).get('Content-Type')).toBe('application/json')
   cleanup(); query.clear()
 })
 it('shows accumulated byte shares per direction and finalizes without inventing transport totals', async () => {

@@ -111,11 +111,13 @@ class Client:
 
 
 def main():
+    from smoke_remote import HostedRelay, RemoteDashboard
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--velocity-jar', type=Path, required=True)
     parser.add_argument('--plugin', type=Path, required=True)
     parser.add_argument('--packetevents', type=Path, required=True)
     parser.add_argument('--hold-seconds', type=int, default=0)
+    parser.add_argument('--cloudflare', action='store_true')
     args = parser.parse_args()
     assert hashlib.sha256(args.velocity_jar.read_bytes()).hexdigest() == VELOCITY_SHA256
     directory = Path(tempfile.mkdtemp(prefix='velocity-attribution-', dir='/tmp/opencode'))
@@ -136,22 +138,11 @@ def main():
     config = re.sub(r'^factions = .*$', f'survival = "127.0.0.1:{survival.port}"', config, flags=re.M)
     config = config.replace('"factions"', '"survival"')
     (directory / 'velocity.toml').write_text(config)
-    data = plugins / 'networkprofiler'
+    data = plugins / 'vnp'
     data.mkdir()
     # Shortened publication interval for tests only; production default remains 30s.
-    (data / 'config.yml').write_text(f'http:\n  port: {http_port}\nstatistics:\n  interval-seconds: 1\n')
-    root = f'http://127.0.0.1:{http_port}'
-
-    def get(path):
-        with urllib.request.urlopen(root + path, timeout=5) as response:
-            return json.load(response)
-
-    def post(path, body=None):
-        token = get('/api/v1/captures')['csrfToken']
-        req = urllib.request.Request(root + path, json.dumps(body or {}).encode(),
-                                     {'Content-Type': 'application/json', 'Origin': root, 'X-MNP-CSRF': token}, method='POST')
-        with urllib.request.urlopen(req, timeout=10) as response:
-            return json.load(response)
+    relay = HostedRelay(directory, http_port, args.cloudflare)
+    (data / 'config.yml').write_text(relay.config() + 'statistics:\n  interval-seconds: 1\n')
 
     def wait(action, message, timeout=15):
         deadline = time.monotonic() + timeout
@@ -168,10 +159,13 @@ def main():
 
     log_path = directory / 'smoke.log'
     clients = []
+    dashboard = None
     with log_path.open('w') as log:
         process = subprocess.Popen(['java', '-Xms128m', '-Xmx512m', '-jar', str(args.velocity_jar.resolve())],
                                    cwd=directory, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT, text=True)
         try:
+            dashboard = RemoteDashboard(relay, process, log_path)
+            root, get, post = dashboard.root, dashboard.get, dashboard.post
             wait(lambda: get('/api/v1/health')['healthy'] and get('/api/v1/captures')['available'], 'startup', 45)
             alice = Client(mc_port, 'Alice'); clients.append(alice)
 
@@ -239,7 +233,10 @@ def main():
         finally:
             for client in clients:
                 client.close()
-            shutdown(process, http_port, log_path)
+            shutdown(process, mc_port, log_path)
+            if dashboard:
+                dashboard.close()
+            relay.close()
             lobby.close(); survival.close()
     print('Clean shutdown verified. Full modern backend/gameplay testing remains separate.')
 
