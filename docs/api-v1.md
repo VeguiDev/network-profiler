@@ -1,5 +1,24 @@
 # API v1
 
+## Hosted access and authentication
+
+Minecraft exposes no HTTP port. The Hono backend hosts these public endpoints:
+
+| Endpoint | Authentication / result |
+| --- | --- |
+| `POST /api/v1/server` | Register a new server; 201 `{serverUuid, serverToken}`. Private token is returned once and stored locally; backend stores SHA-256 only. Rate-limit registration at the deployment edge. |
+| `WS /api/v1/events/<serverUuid>` | Plugin only, `Authorization: Bearer <serverToken>`. Never put the token in a URL. |
+| `POST /api/v1/dashboard/<dashboardId>/viewer` | Same-origin browser join. Sets private HttpOnly, SameSite=Strict cookie (Secure on HTTPS); returns pending metadata, never metrics. |
+| `GET /api/v1/dashboard/<dashboardId>/session` | Cookie-authenticated session/approval/connectivity metadata. |
+| `WS /api/v1/dashboard/<dashboardId>/events` | Cookie + exact browser Origin; pending viewers receive only their session metadata. |
+| `GET/POST /api/v1/dashboard/<dashboardId>/proxy/<operation>` | Approved browser cookie; POST additionally JSON, exact Origin and `X-VNP-CSRF` from `/session`. |
+
+`dashboardId` is `<serverUuid>.<192-bit-random-hex>`, allowing routing to the owning Durable Object without a global directory. It is **not** browser authorization. `/vnp dashboard` explicitly creates a link; socket reconnection does not create another. `/vnp trustSession <code>` approves one pending viewer on that server, once, within ten minutes. Every browser approval grants full read/write dashboard access, not a read-only role.
+
+Session metadata: `dashboardId`, `viewerSessionId`, `state` (`PENDING|APPROVED`), pending-only `approvalCode`, `csrfToken`, `serverConnected`, `bootId`, nullable `expiresAt` and `lastUpdate`. Session expiry is checked on operations and by durable deadlines. Missing browser or server starts a forty-minute grace; only both returning cancels it. Other browsers cannot renew that viewer. Expired authorization returns 410 where identifiable; missing/invalid cookies return 401, unapproved data access 403. WebSocket expiry closes with 4001. Offline forwarded operations return 503; a lost connection after a write means its outcome may be unknown, and writes are **not automatically retried**.
+
+The operation paths below are **logical plugin service paths**. For example, `/api/v1/captures` is accessed by the browser as `/api/v1/dashboard/<dashboardId>/proxy/captures`; it is not an unscoped public route. Only the listed read/write operations are forwarded, never arbitrary URLs or commands. Capture/settings responses no longer carry the obsolete local HTTP CSRF token.
+
 All timestamps are Unix epoch milliseconds. `intervalMs` is the real measured interval; `uptimeMs` is monotonic elapsed session time. Rates are numeric bytes/second, regardless of dashboard unit selection. Cumulative byte totals are decimal **strings** to preserve JavaScript precision. Missing rates/disabled directions use `null`, not zero. The initial baseline has sequence 0 and no computed rates.
 
 HTTP responses are JSON with `Cache-Control: no-store`. Unknown API routes return 404. Health returns 503 when collection is disabled, failed, stopped or stale (five seconds without a sample). A healthy idle connection legitimately produces zero rates.
@@ -40,7 +59,7 @@ Fields: `detail`, `platform`, `platformVersion`, profiler `version`, `sessionId`
 { "sessionId": "uuid", "samples": [] }
 ```
 
-Samples are ordered by sequence and belong to that session. Reset clears history and changes session ID. No pagination/database exists; server configuration bounds the response (default 900 samples).
+Through the hosted proxy this also includes `bootId`, `serverConnected`, `lastUpdate`. The relay serves its bounded temporary samples even while Minecraft is offline; absence is not backfilled with zeros. It retains at most two boot series, 900 samples each, 2 MiB combined per registered server. A new Minecraft startup gets a new boot UUID, separate from the transport `sessionId` (which `/vnp reset` changes). History selects the current boot's latest transport stream; clients must not mix boot/stream counters. Reconnection preserves the boot's history. Samples exist only while a relevant dashboard is retained, not as a permanent cloud archive.
 
 ## Health: `/api/v1/health`
 
@@ -48,22 +67,22 @@ Samples are ordered by sequence and belong to that session. Reset clears history
 { "healthy": true, "state": "RUNNING", "detail": "Client-side transport bytes" }
 ```
 
-## Live: `/api/v1/live`
+## Browser live stream
 
-Read-only WebSocket. Each JSON message is a snapshot with the additional field `"type": "traffic.snapshot"`. A baseline/current snapshot is sent on connect. Client application messages close the stream with policy violation. No client subscription messages are necessary.
+Use `/api/v1/dashboard/<dashboardId>/events`, not the removed `/api/v1/live`. The server sends `relay.state` session metadata and, **only after approval**, `traffic.snapshot` messages. Browser sends `{ "type": "heartbeat" }` every ten seconds; no other browser socket operations are accepted. Peer leases are 45 seconds, so unclean loss is detected even without a close event. Explicit disconnect is detected immediately. Offline state preserves historical graph values marked stale and disables writes. A new boot clears the browser's old live-series/cache state.
 
 Deduplicate using `(sessionId, sequence)`, never timestamp alone. On reconnect, receive the current session, fetch history, then merge only that session. A stale HTTP response must never replace a newer session. Slow clients can miss intermediate live frames; history recovers retained samples. Switching bytes/bits or pausing does not change server collection.
 
-Security: same-origin by default, explicit Host allowlist, no permissive CORS, Origin validation for browser upgrades. Authentication must be provided externally for remote use.
+Authentication is the approved private browser cookie, not link possession. Origin checks and per-viewer CSRF additionally protect mutations; the registration token is never sent to browsers. Serve assets and API on one origin.
 
 ## Packet captures
 
-- `GET /api/v1/captures`: `{ "available": true, "detail": "Ready", "csrfToken": "…", "maxDurationSeconds": 900, "reports": [] }`. Report summaries omit packet/attribution rows and history (`packets: [], attributions: [], timeline: null`); newest first. Availability is false during loading, when disabled or when supported external PacketEvents is missing. Saved reports can still be read without PacketEvents.
+- `GET /api/v1/captures`: `{ "available": true, "detail": "Ready", "maxDurationSeconds": 900, "reports": [] }`. Report summaries omit packet/attribution rows and history (`packets: [], attributions: [], timeline: null`); newest first. Availability is false during loading, when disabled or when supported external PacketEvents is missing. Saved reports can still be read without PacketEvents, but Minecraft must be connected to fetch them.
 - `GET /api/v1/captures/{id}`: full live/final report, 404 if unknown or expired. Poll active reports once per second; final reports are immutable. No additional WebSocket is created per report/component.
 - `POST /api/v1/captures`: JSON `{}` uses configured max duration/global scope, or `{ "durationSeconds": 60, "scope": { "type": "SERVER", "id": "lobby" } }`; returns 201. Scope types: `GLOBAL` (null/omitted id), `SERVER` (known server name), `PLAYER` (tracked online UUID), `CONNECTION` (active physical UUID). One shared capture only, including command-triggered sessions. Scope matching happens at collection time. Invalid/unknown options return 400, overlapping/finalizing captures 409, unavailable analysis 503.
 - `POST /api/v1/captures/{id}/stop`: JSON `{}`, returns the finalized report after asynchronous persistence. A matching repeated stop is idempotent while the report is retained. A mismatched ID never stops a different capture (409).
 
-Both POSTs require `Content-Type: application/json`, an allowed **Origin**, and `X-MNP-CSRF` matching the token from the index. Missing/foreign origin or wrong token returns 403. These are CSRF safeguards, not an authentication mechanism; protect every route with reverse-proxy authentication for remote access.
+Both POSTs require an approved browser cookie, `Content-Type: application/json`, exact **Origin**, and `X-VNP-CSRF` from the viewer session. Missing/foreign Origin or wrong token returns 403. Expiry never stops a local capture; a newly approved dashboard can access it again.
 
 Report schema (illustrative values):
 
@@ -124,10 +143,10 @@ Graph selection combines server/player/connection filters; packet search does no
 
 ## Shared dashboard settings
 
-- `GET /api/v1/settings`: `{ "bandwidth": { "inboundMbps": null, "outboundMbps": null }, "csrfToken": "…", "persistent": true }`.
+- `GET /api/v1/settings`: `{ "bandwidth": { "inboundMbps": null, "outboundMbps": null }, "persistent": true }`.
 - `POST /api/v1/settings`: JSON `{ "inboundMbps": 100, "outboundMbps": 50 }`; returns the same response shape after persistence. Both fields are required, each null (disabled) or a finite decimal number greater than zero and at most 1,000,000. Unknown keys/invalid values return 400. IO failure returns an error and preserves the previous in-memory value; no false success.
 
-POST requires JSON, allowed Origin and `X-MNP-CSRF` from settings/capture index; no additional authentication is provided. Settings work without PacketEvents. The Velocity plugin atomically persists `dashboard-settings.json` in its data folder. Values represent decimal Mbps: `bytesPerSecond = Mbps * 1,000,000 / 8`. They are shared, optional **visual references only**, never network rate limits. Chart domains include exceeded values rather than clipping them. UI clients refresh shared settings every 30 seconds; the saving client updates immediately. Protect these mutations with reverse-proxy authentication as well. SPA `/settings` supports direct refresh.
+POST requires approved browser cookie, JSON, exact Origin and session `X-VNP-CSRF`. Settings work without PacketEvents. The plugin atomically persists `dashboard-settings.json` locally, not in the relay. Values are decimal Mbps: `bytesPerSecond = Mbps * 1,000,000 / 8`. They are shared **visual references only**, never traffic limits. Chart domains include exceeded values. UI clients refresh shared settings every 30 seconds; the saving client updates immediately. `/<dashboardId>/settings` supports direct refresh.
 
 ## Lightweight protocol statistics
 
@@ -143,4 +162,12 @@ Each row: `id`, nullable `playerId`/`playerName`, `serverId`, `active`, `connect
 
 Optional parameters: `q` (up to 256 characters), `page` (zero-based, max 100000), `pageSize` (1–200, default 50), `serverId`, `playerId`. Sort by combined interval bytes descending, then ID. Full collection `intervalInboundBytes`/`intervalOutboundBytes` denominators are calculated **before search, filtering and pagination**; `total` counts filtered rows. BOTH uses their sum; IN/OUT use their respective denominator. No normalization to filtered results. Unknown/expired detail IDs return 404 after the first publication; while collecting the first interval the response has `ready: false` and empty rows. Missing/disabled PacketEvents gives `available: false`, not fabricated healthy zeros. Already-published values can remain stale with that flag. `complete: false` and error/untracked counters signal lost coverage or configured limits; percentages cannot claim to represent omitted traffic.
 
-No IP addresses are included. Protect these identity-bearing read endpoints with the same reverse-proxy authentication as reports and the dashboard. SPA routes `/servers`, `/servers/{name}`, `/connections`, `/connections/{uuid}`, `/players/{uuid}` support direct refresh.
+No IP addresses are included. These identity-bearing reads require approval, just like reports. SPA routes under `/<dashboardId>/servers`, `/connections`, `/players` support direct refresh and preserve the dashboard prefix.
+
+## Plugin relay protocol (version 1)
+
+The authenticated server socket starts with `{type:"hello", protocol:1, bootId:"uuid"}`. Server heartbeats renew its lease; the backend replies with `heartbeat` and `subscription` (`enabled`) so transport snapshots are sent only while dashboards are relevant. A plugin lifetime has one boot UUID, independent of resets. Snapshots include type `traffic.snapshot` and boot ID.
+
+Explicit commands: `dashboard.create` (`requestId`) and `viewer.trust` (`requestId`, `code`). Responses are `command.result` with the matching ID and success/result or error. Commands are not replayed on reconnect. Browser requests become `rpc.request` (`requestId`, `method`, logical `path`, JSON `body`). Plugin replies with ordered `rpc.chunk` (`requestId`, zero-based `index`, HTTP `status`, base64 `data`, `final`). JSON response size is capped at 32 MiB; plugin chunks contain at most 32,768 raw bytes, WebSocket frames at most 96 KiB. Invalid/out-of-order/status-inconsistent/oversized responses fail rather than return partial JSON.
+
+At most eight RPCs per registered server are pending, with a 60-second backend timeout and bounded plugin work queue. Authorization is bound to the originating viewer and rechecked during expiry; late chunks cannot resurrect revoked requests. Reports are held transiently only for an active response, never written to relay storage. A disconnect can leave a write completed locally but its response lost; explicit user reconciliation is required, not a hidden retry.

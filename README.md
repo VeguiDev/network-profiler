@@ -1,6 +1,10 @@
-# Minecraft Network Profiler
+# Vegui Network Profiler (VNP)
 
-A modular, open-source network profiler for Minecraft. Measure **real client ↔ proxy transport traffic**, inspect lightweight server/connection statistics, then run scoped on-demand packet analysis with a live view and saved reports. No database, packet-content capture or synthetic production data.
+<p align="center">
+  <img src="docs/assets/vnp-logo.png" alt="Vegui Network Profiler logo" width="220" />
+</p>
+
+A modular, open-source network profiler for Minecraft. Measure **real client ↔ proxy transport traffic**, inspect server/connection statistics and run scoped packet analysis. A separately hosted **Hono API + Astro/React dashboard** connects to the plugin through an outgoing authenticated WebSocket. Minecraft hosts no HTTP listener or web assets. No packet-content capture or synthetic production data.
 
 ## Compatibility
 
@@ -20,38 +24,37 @@ Velocity 4.x itself requires Java 25. A Java 21-compatible core does **not** mak
 ./gradlew build
 ```
 
-On Windows use `gradlew.bat build`. Gradle automatically detects common JDK installations. For custom locations, set `org.gradle.java.installations.paths` in your **local** Gradle configuration. The build runs Java/frontend tests, type-checks and compiles the frontend, bundles its static assets and produces:
+On Windows use `gradlew.bat build`. Gradle automatically detects common JDK installations. For custom locations, set `org.gradle.java.installations.paths` in your **local** Gradle configuration. The build runs Java, backend and frontend tests, type-checks the backend, builds Astro separately and produces:
 
 ```text
-profiler-platforms/velocity/build/libs/minecraft-network-profiler-velocity-0.1.0.jar
+profiler-platforms/velocity/build/libs/vegui-network-profiler-velocity-0.1.0.jar
 ```
 
-Install **this JAR**, not the `-thin` or `-sources` artifacts. The shared modules target Java 21 and the Velocity adapter targets Java 25. Dependencies are pinned in `gradle/libs.versions.toml` and `profiler-web/package-lock.json`. The wrapper validates its distribution checksum.
+Install **this JAR**, not the `-thin` or `-sources` artifacts. It does not contain the dashboard, Javalin or Jetty. The shared modules target Java 21 and the Velocity adapter targets Java 25. Dependencies are pinned in the Gradle catalog and each npm lockfile. Astro assets are in `profiler-web/dist/`. See [hosted deployment](docs/hosting.md) for Node and Cloudflare Workers + Durable Objects.
 
 ## Install and open the dashboard
 
-1. Stop Velocity and copy the plugin JAR into its `plugins/` directory.
-2. Start Velocity with Java 25 or later.
-3. Open **http://127.0.0.1:8765/** on the proxy host.
-4. Generate Minecraft traffic: the Overview updates once per second.
+1. Deploy the hosted backend/dashboard at your HTTPS origin, for example `https://vnp.vegui.dev` (not a bundled public service).
+2. Stop Velocity, install the JAR and configure `relay.endpoint` and `relay.public-web-url` for that origin.
+3. Start Velocity with Java 25+. Registration runs asynchronously and saves a private `relay-identity.json`; relay outages never stop local collection.
+4. Run `/vnp dashboard`, open the generated link, then approve **that browser** with `/vnp trustSession <code>` shown on its pending page.
+5. The approved browser can read metrics/reports, start/stop captures and edit Settings. A different browser needs its own approval, even with the same link.
 
-For access from your own workstation without exposing HTTP:
+No inbound dashboard port, SSH tunnel or reverse proxy is required on Minecraft. The hosted Node service still needs HTTPS termination; Cloudflare provides the hosted HTTPS endpoint. The plugin opens its outgoing socket on dashboard/trust commands and reconnects automatically without creating extra dashboard links.
 
-```sh
-ssh -L 8765:127.0.0.1:8765 user@proxy-host
-```
-
-The plugin creates `plugins/networkprofiler/config.yml`. Changes require a proxy restart. Commands require `networkprofiler.admin` (or the Velocity console). `/networkprofiler` and `/mnp` are aliases:
+The plugin creates `plugins/vnp/config.yml`. Changes require a proxy restart. Commands require `vnp.admin` (or the Velocity console). Use `/vnp`:
 
 | Command | Action |
 | --- | --- |
-| `/mnp start [seconds]` | Start the single shared packet capture; defaults to the configured maximum duration |
-| `/mnp start [seconds] --server <name>` | Capture only packets associated with this server |
-| `/mnp start [seconds] --player <name\|uuid>` | Follow the player UUID across transfers/reconnections |
-| `/mnp start [seconds] --connection <uuid>` | Capture one physical connection; stops on disconnect |
-| `/mnp stop` | Finalize and save that capture; print interval protocol totals and a report link |
-| `/mnp status` | Transport state and packet capture state |
-| `/mnp reset` | Reset transport counters/history only; an active packet capture is independent |
+| `/vnp dashboard` | Create a dashboard link through the outgoing relay connection |
+| `/vnp trustSession <code>` | Approve one pending browser for full access; single-use code, valid ten minutes |
+| `/vnp start [seconds]` | Start the single shared packet capture; defaults to the configured maximum duration |
+| `/vnp start [seconds] --server <name>` | Capture only packets associated with this server |
+| `/vnp start [seconds] --player <name\|uuid>` | Follow the player UUID across transfers/reconnections |
+| `/vnp start [seconds] --connection <uuid>` | Capture one physical connection; stops on disconnect |
+| `/vnp stop` | Save the capture locally; open Reports in an approved dashboard |
+| `/vnp status` | Transport, packet capture and relay state |
+| `/vnp reset` | Reset transport counters/history only; an active packet capture is independent |
 
 ## Configuration
 
@@ -60,14 +63,10 @@ profiler:
   enabled: true
   sampling-interval-ms: 1000
   history-duration-seconds: 900
-http:
+relay:
   enabled: true
-  host: "127.0.0.1"
-  port: 8765
-  allowed-hosts: ["127.0.0.1", "localhost", "[::1]"]
-  allowed-origins: []
-  max-websocket-clients: 16
-  public-base-url: ""
+  endpoint: "https://vnp.vegui.dev"
+  public-web-url: "https://vnp.vegui.dev"
 traffic:
   enabled: true
   track-inbound: true
@@ -93,12 +92,12 @@ statistics:
 - History accepts 1–86,400 seconds; default 900. Both sample capacity and elapsed retention are bounded. No backfilled/fabricated samples after scheduler delays.
 - Unknown keys, duplicate YAML keys, unsafe YAML tags, invalid types and out-of-range values are rejected.
 - Disabled directions have `available: false` and null values, not misleading zero values. Combined totals are unavailable when either direction is disabled.
-- `http.enabled: false` leaves collection active without a dashboard/API.
+- `relay.enabled: false` leaves collection and local commands active without remote access. Legacy known `http` keys are accepted for migration but ignored: they no longer open a listener. Replace that section with `relay`.
 - An incompatible integration is explicitly unhealthy; inspect console logs and `/api/v1/status` when available.
-- Capture duration accepts 1–86,400 seconds; saved report count 1–1,000; retention 1–365 days. Reports live in `plugins/networkprofiler/reports/` as versioned JSON, at most 32 MiB each. Count/age limits also apply to disk files and active checkpoints. Attribution is capped at 1–20,000 dimension/type rows; hitting the cap preserves capture totals but explicitly marks attribution incomplete.
+- Capture duration accepts 1–86,400 seconds; saved report count 1–1,000; retention 1–365 days. Reports live in `plugins/vnp/reports/` as versioned JSON, at most 32 MiB each. Count/age limits also apply to disk files and active checkpoints. Attribution is capped at 1–20,000 dimension/type rows; hitting the cap preserves capture totals but explicitly marks attribution incomplete.
 - Lightweight statistics count protocol bytes continuously and publish interval averages every 30 seconds by default (configurable 1–300). Limits: 1–100,000 active/recent connections, 1–10,000 server identities, and 0–86,400 seconds of disconnected retention. Closed connections are published one final time before pruning. Limits or observation failures mark coverage incomplete rather than inventing data. These statistics are in memory, not automatic persisted reports.
 - Capture timelines sample every second, plus the final partial interval. They retain at most `max-timeline-samples` points (2–86,402) and `max-timeline-entries` sparse dimension/population entries (1–20,000). Reaching a limit marks history incomplete without stopping cumulative counters. Missing coverage is shown as unknown/gaps, never fabricated zero traffic. Unchanged population maps are stored once and carried forward.
-- `http.public-base-url`, for example `https://metrics.example.com`, creates clickable in-game report links. It must be an HTTP(S) origin without credentials, query or subpath. Empty means a relative dashboard path is printed, **not a misleading remotely accessible localhost link**. This option neither exposes the listener nor configures authentication.
+- Relay URLs must be HTTPS origins without credentials, query or subpath; HTTP is allowed only on loopback for development. Serve the API and Astro assets on the same public origin. The private identity file binds credentials to the relay endpoint; an endpoint change or corrupt identity is explicitly refused rather than silently replacing credentials. Back it up privately; deliberate migration requires provisioning a new identity while retaining local report/settings files.
 
 ## What IN and OUT mean
 
@@ -122,9 +121,9 @@ Overview includes current IN/OUT, cumulative totals, peaks, combined transferred
 
 Pause freezes presentation only; collection, history and the single shared WebSocket continue. Reconnection uses exponential backoff with jitter, recovers HTTP history and merges by session/sequence. Disconnected values are marked stale. Servers and Connections provide lightweight protocol-byte tables, interval rates/shares and clickable Details; player details are linked from connections.
 
-**Settings** persists separate optional IN/OUT bandwidth capacities in `plugins/networkprofiler/dashboard-settings.json`. Empty disables a reference; values are decimal Mbps, correctly converted for bytes/bits display. The chart extends its scale to show references and traffic, including over-capacity values. These settings are **visual only**, never throttling traffic or altering counters. They apply to Overview and report graphs and are shared by dashboard users; other open clients refresh settings within 30 seconds. Saving uses atomic replacement where supported and does not rewrite YAML. All users allowed through the reverse proxy can edit settings; there is no built-in authentication or read-only role.
+**Settings** persists separate optional IN/OUT bandwidth capacities in `plugins/vnp/dashboard-settings.json`. Empty disables a reference; values are decimal Mbps, correctly converted for bytes/bits display. The chart extends its scale to show references and traffic, including over-capacity values. These settings are **visual only**, never throttling traffic or altering counters. They apply to Overview and report graphs and are shared by approved browsers; other open clients refresh settings within 30 seconds. Saving uses atomic replacement where supported and does not rewrite YAML. Approval grants full access; there is no separate read-only role.
 
-Install the external Velocity PacketEvents 2.14.0 plugin, then press **Start analysis** or run `/mnp start`. All controls share **one simultaneous capture**, either global or scoped to a server, player UUID or physical connection. Detail pages start a capture for that entity; the Overview starts global analysis. `/reports/{id}` shows live packet totals once per second while recording, then an immutable report after **Stop & save report** or `/mnp stop`. `/reports` lists retained captures; direct links work after refresh and restart. Permanent statistics do not classify packet types; detailed type/dimension counters exist only during a capture.
+Install external Velocity PacketEvents 2.14.0, then press **Start analysis** or run `/vnp start`. All controls share **one simultaneous capture**, global or scoped to a server, player UUID or physical connection. Detail pages start a capture for that entity; Overview starts global analysis. `/<dashboardId>/reports/{id}` shows live packet totals once per second while recording, then an immutable report after **Stop & save report** or `/vnp stop`. Reports remain on Minecraft across restarts; access them through a valid approved dashboard. Permanent statistics do not classify packet types; detailed counters exist only during a capture.
 
 Reports group observations by associated server, connection and player, with percentages, filters and Details links. A server transfer creates a new association; previously collected bytes never move to the new server. Player captures follow UUID across transfers and reconnects until stopped or timed out; connection captures stop on socket closure. Only one scope is collected, not an unrelated global capture filtered later. Older schema-1 reports remain readable without fabricated attribution.
 
@@ -140,32 +139,15 @@ These are **protocol observations**, not the transport metric above: PacketEvent
 
 Graceful shutdown finalizes an active capture as `INTERRUPTED`. A partial checkpoint is saved at start and every five seconds; after an unclean shutdown it is recovered as explicitly partial `INTERRUPTED` data, never resumed or presented as complete. Data since the last checkpoint is lost. Save failures appear as `SAVE_FAILED` (memory-only) rather than claiming successful persistence.
 
-## API
+## Remote sessions and security
 
-| Route | Purpose |
-| --- | --- |
-| `GET /api/v1/status` | State, detail, platform/version, session, uptime and active capabilities |
-| `GET /api/v1/traffic/current` | Latest immutable snapshot |
-| `GET /api/v1/traffic/history` | Bounded current-session history |
-| `GET /api/v1/health` | HTTP 200 healthy, 503 unavailable/disabled/stale |
-| `WS /api/v1/live` | Initial snapshot, then new snapshots once per second |
-| `GET /api/v1/captures` | Availability, limits, CSRF token and report summaries |
-| `GET /api/v1/captures/{id}` | Live capture or retained immutable report |
-| `GET /api/v1/servers[/{id}]` | Published server statistics |
-| `GET /api/v1/connections[/{id}]` | Active/recent physical connection statistics |
-| `GET /api/v1/players/{uuid}` | Retained connections for a player UUID |
-| `GET /api/v1/settings` | Shared visual bandwidth settings, persistence flag and CSRF token |
-| `POST /api/v1/settings` | Persist independent optional IN/OUT capacities in decimal Mbps |
-| `POST /api/v1/captures` | Start a capture; optional JSON `durationSeconds` and `scope` |
-| `POST /api/v1/captures/{id}/stop` | Stop/finalize the matching capture |
+The plugin registers at `POST /api/v1/server` and authenticates `WS /api/v1/events/<serverUuid>` with a Bearer token. Hosted storage keeps only its hash. Dashboard links are routing identifiers, **not authorization**. Each browser gets a private HttpOnly cookie and requires in-game approval before reading any metrics. Browser writes also require same-origin Origin, JSON and a session CSRF token. No arbitrary HTTP tunnel, console command execution or automatic write replay is exposed.
 
-See [the versioned contract](docs/api-v1.md). Capture actions and settings changes require same-origin/allowlisted Origin, JSON and `X-MNP-CSRF`; this is **not authentication**. This service has **no built-in authentication**.
+If either Minecraft or that browser disconnects, a **40-minute reconnection grace** begins. It is cancelled only when both return before expiry; another viewer cannot renew this browser's authorization. Unapproved codes expire after ten minutes. Expiry revokes access but does not delete local reports, stop captures or reset Settings.
 
-## Security / reverse proxy
+The relay retains bounded **temporary transport statistics per Minecraft startup**: up to two boot series, 900 points per series and 2 MiB combined per registered server. Reconnect preserves a boot; restart creates a new one, and `/vnp reset` creates a new transport stream within the boot. Different dashboards share these temporary samples, not authorization. Offline dashboards show stale history and a disconnected warning; unavailable operations are disabled rather than displaying invented zeros. Local captures/reports/Settings are fetched on demand and are not archived in the cloud. Temporary samples are removed after the last relevant dashboard expires. The hosted operator is trusted to relay data and authorize sessions; TLS does not make the relay end-to-end encrypted.
 
-Keep HTTP bound to loopback. Do not expose the metrics port directly. For remote access, authenticate **all** dashboard/API/WebSocket routes at a TLS reverse proxy. See [the nginx example](docs/reverse-proxy.md).
-
-Host allowlisting mitigates browser DNS rebinding. Browser WebSocket origins must match the requested authority or an explicit allowed origin. Non-browser read-only clients may omit Origin; capture/settings mutations must supply it and the CSRF token. These checks are not authentication: an HTTP client can fetch a token. Everyone allowed through your authenticated reverse proxy can operate captures and edit settings; there is no separate web read-only role. CORS is not opened by default. Client counts, incoming message sizes, idle time and outbound queues are bounded.
+See [API/protocol](docs/api-v1.md) and [deployment/security](docs/hosting.md). Add registration rate limits and infrastructure quotas before exposing your deployment publicly. Never log tokens, cookies, report bodies or complete WebSocket frames.
 
 ## PacketEvents integration
 
@@ -180,14 +162,18 @@ profiler-api                 platform-free contracts
     ↑
 profiler-core               LongAdder counters, immutable samples, sessions, ring buffer
     ↑                 ↑
-profiler-netty         profiler-server → bundled profiler-web
+profiler-netty         profiler-server (local services / files, no listener)
     ↑                 ↑
-profiler-platforms/velocity
+profiler-platforms/velocity → profiler-relay (outgoing Java HTTP/WS)
+                                    ↓
+                    profiler-backend (Hono: Node or Cloudflare DO)
+                                    ↑
+                    profiler-web (Astro + React dashboard)
 ```
 
-No buffers are copied, retained or inspected for packet content by the counting handler. Per-event collection does not acquire global locks. Sampling happens on a separate scheduler. OUT uses promise completion listeners with size/session only. Shutdown removes our handlers and listeners, stops our schedulers/server and never closes proxy-owned channels or loops.
+No buffers are copied, retained or inspected for packet content by the counting handler. Per-event collection does not acquire global locks. Sampling happens on a separate scheduler. OUT uses promise completion listeners with size/session only. Shutdown removes our handlers/listeners and stops our schedulers/relay, never proxy-owned channels or loops.
 
-Each WebSocket client has at most one active frame and one replaceable pending frame. Slow sends time out. A single permanent PacketEvents listener updates lightweight direction counters when statistics are enabled, without packet-type lookup. Active captures additionally use a bounded type catalog, dimension counters and per-thread stop gates, not packet objects. No strings, JSON, disk IO, wrappers or buffer copies are created per observed packet by our listener. First-use dimension/thread bookkeeping and LongAdder contention cells can allocate; first-use dimension registration is synchronized, steady-state counter updates are not globally locked. PacketEvents itself has baseline processing/copying overhead. Checkpoints and final serialization run on a separate worker. No overhead percentage is promised without representative benchmarks.
+A single permanent PacketEvents listener updates lightweight direction counters when statistics are enabled, without packet-type lookup. Active captures additionally use a bounded type catalog, dimension counters and per-thread stop gates, not packet objects. No JSON, disk IO, wrappers or buffer copies are created per observed packet by our listener. First-use dimension/thread bookkeeping and LongAdder contention cells can allocate; first-use dimension registration is synchronized, steady-state updates are not globally locked. PacketEvents itself has baseline processing/copying overhead. Relay serialization/RPC, checkpoints and final serialization stay off packet event loops. Relay queues, frames and report responses have explicit bounds; Cloudflare storage/event costs still depend on active sessions. No overhead percentage is promised without representative benchmarks.
 
 See [instrumentation and limitations](docs/instrumentation.md). `TOTAL_TRAFFIC` is available for supported transport collection; `PACKET_TRAFFIC` is declared when capture analysis is available; `CONNECTION_TRAFFIC`, `PLAYER_TRAFFIC` and `SERVER_ATTRIBUTION` describe enabled, healthy protocol attribution. `BACKEND_TRAFFIC` is deliberately not declared. BungeeCord, Paper, Folia/Pinac, Fabric and NeoForge are architectural targets, **not supported integrations yet**.
 
@@ -195,15 +181,18 @@ Timeline/population aggregation also runs on the independent capture worker, not
 
 ## Development and tests
 
-Run the installed plugin, then:
+Build the static dashboard, then run the Node backend (which serves API, WebSockets and Astro assets on one origin):
 
 ```sh
 cd profiler-web
 npm ci
-npm run dev
+npm run build
+cd ../profiler-backend
+npm ci
+PUBLIC_ORIGIN=http://127.0.0.1:3000 npm start
 ```
 
-Vite binds to loopback and proxies `/api` HTTP/WebSocket to `127.0.0.1:8765`. Production always uses the embedded server and compiled assets.
+For this loopback setup use the same origin in the plugin's relay URLs. `npm run dev:cloudflare` runs the Durable Object adapter locally; see [hosting](docs/hosting.md) for its origin override. Astro dev alone is a UI shell, not a relay. Plugin-only packaging is independent: `./gradlew :profiler-platforms:velocity:shadowJar`.
 
 ```sh
 ./gradlew check
@@ -216,10 +205,10 @@ For the actual shaded JAR against the pinned Velocity distribution:
 ```sh
 python3 tools/smoke_velocity.py \
   --velocity-jar /path/to/velocity-4.3.0-44.jar \
-  --plugin profiler-platforms/velocity/build/libs/minecraft-network-profiler-velocity-0.1.0.jar
+  --plugin profiler-platforms/velocity/build/libs/vegui-network-profiler-velocity-0.1.0.jar
 ```
 
-The script verifies the Velocity checksum, starts an isolated loopback proxy under `/tmp/opencode`, exchanges real Minecraft status/ping packets, compares exact IN/OUT byte totals and checks clean shutdown. Add `--proxy-protocol` or `--packetevents /path/to/packetevents-velocity-2.14.0.jar` to exercise those paths. Add `--packet-capture` with PacketEvents to validate exact per-type bytes/counts, HTTP-start/command-stop and command-start/HTTP-stop, immutable reports and disk persistence. `--channel-provider native` tests native discovery with external PacketEvents installed. It does not accept a Minecraft server EULA or start a backend.
+The script starts an isolated Node relay and real loopback Velocity, registers the plugin, creates a browser session, verifies pending reads are forbidden, approves it through the console, then compares exact Minecraft status/ping IN/OUT totals. Add `--cloudflare` to use Wrangler locally, `--proxy-protocol`, or `--packetevents /path/to/packetevents-velocity-2.14.0.jar`. Add `--packet-capture` with PacketEvents for exact type counts, shared command/remote capture controls, immutable reports and report/Settings persistence across a real restart. It does not accept an EULA or start a full backend.
 
 `tools/smoke_attribution.py` accepts the same three JAR arguments and exercises actual offline login, a successful lobby → survival transfer, scoped exclusion, physical disconnect finalization and player reconnect tracking against two minimal protocol backend peers. It does not start full Minecraft servers or accept an EULA; modern online-mode/gameplay compatibility still requires manual testing.
 

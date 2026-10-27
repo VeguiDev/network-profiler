@@ -36,7 +36,13 @@ An off-event-loop worker samples cumulative direction/dimension counters approxi
 
 Population samples use Velocity's real player collection and current server, separately from the bounded connection registry. Pre-login/status sockets never inflate global player counts. The sampler retains requested identity → current-server maps so saved PLAYER/CONNECTION views can follow transfers without rewriting history. Offline/unassigned identities have unknown local population; registered empty servers can have measured zero. Counts are point-in-time observations, not averages across the traffic interval or a causal attribution. Unchanged maps are carried forward; sparse deltas/maps and sample counts have separate configured bounds, with explicit incomplete flags. Population/temporal aggregation creates no per-packet timeline objects.
 
-Dashboard bandwidth capacities are independent IN/OUT decimal Mbps references stored in a separate atomic JSON file. They affect graph scaling/labels only, never handlers, schedulers, counters or traffic flow. HTTP settings changes use the existing Host/Origin/CSRF safeguards, not a new authentication system.
+Dashboard bandwidth capacities are independent IN/OUT decimal Mbps references stored in a separate local atomic JSON file. They affect graph scaling/labels only, never handlers, schedulers, counters or traffic flow. Remote settings changes require an approved browser, exact Origin and session CSRF.
+
+### Outgoing hosted relay
+
+`profiler-server` now contains local allowlisted services/file stores only; no Javalin, Jetty or HTTP/static listener is embedded. `profiler-relay` asynchronously registers a private identity and uses an authenticated outgoing WebSocket when requested. RPC serialization, bounded report chunking and network work execute off packet event loops. Relay failure cannot disable collection, captures or local storage, and dashboard expiry does not stop a capture. Failed writes are never automatically replayed.
+
+A random relay boot UUID identifies each plugin startup, independently of the resettable transport session ID. The hosted backend retains bounded temporary transport snapshots, shared by dashboards for that boot, to show stale history during disconnects. Reconnection preserves the boot; restart starts a new series. Reports/settings are accessed on demand from Minecraft and are not durably archived in the relay. Node uses private single-process atomic file state; Cloudflare uses native Durable Object hibernation, storage and alarms. Per-browser approval and forty-minute reconnection grace are distinct from shared sample retention. See [hosting](hosting.md) for limits, trust and cleanup semantics.
 
 ### Modded registry compatibility
 

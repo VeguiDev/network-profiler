@@ -1,81 +1,66 @@
-# Validation checklist
+# Validation
 
-## Automated build
+## Automated checks
 
-Run `./gradlew clean build` with JDK 21, JDK 25 and Node 24.15+. This runs core/concurrency/history/session tests, Netty EmbeddedChannel accounting tests, HTTP/WebSocket integration tests, configuration tests, frontend unit/component tests, TypeScript checking and production packaging.
+Run `./gradlew clean build --no-daemon` with JDK 21, JDK 25 and Node 24.15+. This builds the Velocity JAR, Astro static dashboard and Hono backend independently. It runs Java core/Netty/service/relay/configuration tests, frontend tests, backend security tests and TypeScript checks. `npm run check:cloudflare` in `profiler-backend` additionally validates Workers/Durable Objects packaging without deploying.
 
-## Real proxy smoke
+Coverage includes:
 
-`tools/smoke_velocity.py` starts the actual pinned Velocity distribution with the shaded plugin, makes twelve real Minecraft status/ping exchanges and compares the sent/received byte counts exactly against the API counters. It also checks static dashboard resources, history, proxy exit and HTTP port closure. Run both discovery providers with and without PROXY protocol. With external PacketEvents, add `--packet-capture` to verify exact per-type counts/bytes, HTTP/command control of the same capture, immutable local reports, and persistence across a real proxy restart. Also run without PacketEvents to check standalone transport collection.
+The final `./gradlew clean build --no-daemon` passed **53 Java, 25 frontend and 11 backend tests**. Cloudflare dry-run packaging also passed. The approximately 3.24 MB plugin JAR contains neither frontend resources nor Javalin/Jetty/servlet classes, and has no duplicate archive paths or bundled host APIs.
 
-The smoke creates isolated files under `/tmp/opencode` and preserves logs for inspection. It never opens public listeners, accepts an EULA or starts a backend. It requires the locally supplied Velocity distribution with the pinned checksum. `--hold-seconds` keeps generating real status traffic for browser inspection before automatic shutdown.
+- Transport accounting, session/reset isolation, capture concurrency/freeze, scoped attribution, transfers/reconnects, immutable reports and bounded schema-3 history.
+- Local service operation allowlisting, scope validation, full-denominator statistics pagination, settings validation/atomic persistence and failed-save preservation.
+- Private relay identity persistence, endpoint binding, invalid configuration and relay failures that do not stop local collection.
+- Unapproved browsers cannot read metrics; link possession does not authorize another browser. Approval codes are single-use and isolated by server.
+- Exact 40-minute expiry per viewer, reconnection only cancelling grace when both peers return, independent viewers, pending-code expiry, durable-state reconstruction and temporary-history cleanup.
+- Offline cached transport history without invented zeros, separate boot series, bounded chunked report responses, write failure without replay, Origin/CSRF rejection and bounded request bodies.
+- Astro approval gate, scoped deep links/API paths, remote CSRF, offline sample retention, boot changes clearing previous presentation, chart references and unknown relay gaps.
 
-### Recorded validation — 2026-10-27
+## Recorded hosted-runtime checks — 2026-10-27
 
-`./gradlew clean build --no-daemon` passed on Linux with JDK 21/25 and Node 24.21.0; the final `./gradlew build --no-daemon` passed **56 Java and 20 frontend tests**. The suite covers capture concurrency/freeze/session isolation, scoped collection and reconnect identity, historical association, attribution/registry limits, actual-elapsed statistics rates, legacy/schema-3 persistence, full-denominator pagination/search, duration/retention, source failure, asynchronous slow/failing storage, checkpoint recovery, CSRF/Origin checks, shared HTTP/command capture state, and native initializer cleanup in both PacketEvents shutdown orders. Lost identity explicitly marks a scoped report incomplete, rather than silently excluding possibly matching traffic. The shaded JAR contains the dashboard, has no duplicate archive paths, and does not bundle host Netty, Velocity API, SLF4J or PacketEvents classes. The artifact was tested on Velocity 4.3.0 build 44, with external PacketEvents 2.14.0 in all four capture variants:
+The updated smoke scripts start isolated loopback Node or local Wrangler runtimes and the actual pinned Velocity 4.3.0 build 44 distribution. They do not deploy to Cloudflare or modify production. External PacketEvents 2.14.0 is supplied separately when capture tests are requested.
 
-| Discovery provider | PROXY protocol | Transport IN | Transport OUT | Packet report | Result |
-| --- | --- | --- | --- | --- | --- |
-| Native | Off | 348 B | 2,136 B | 60 packets / 2,412 B | Exact match; restart persistence; clean shutdown |
-| Native | On | 876 B | 2,136 B | 60 packets / 2,412 B | Exact match; restart persistence; clean shutdown |
-| PacketEvents | Off | 348 B | 2,136 B | 60 packets / 2,412 B | Exact match; restart persistence; clean shutdown |
-| PacketEvents | On | 876 B | 2,136 B | 60 packets / 2,412 B | Exact match; restart persistence; clean shutdown |
+`tools/smoke_velocity.py` verifies registration, the outgoing authenticated server WebSocket, `/vnp dashboard`, browser-specific `/vnp trustSession`, rejection before approval and allowlisted RPC. Twelve real status/ping exchanges match **348 B transport IN / 2,136 B OUT**. Packet analysis matches **60 packets / 2,412 protocol bytes across five types**, with no observation errors or cancellations. Captures are started/stopped across console and remote API, final interval deltas reconcile to totals, reports remain immutable, and reports plus 100/50 Mbps settings survive an actual Velocity restart. After Minecraft disconnects, session metadata reports offline and the approved viewer can still read cached temporary history. Shutdown rejects PacketEvents uninject warnings.
 
-Every packet report matched five logical types exactly: HANDSHAKE, REQUEST, PING, RESPONSE and PONG, with 312 B inbound and 2,100 B outbound protocol observations and no observation errors or cancellations. Transport totals include framing and, when enabled, PROXY headers; packet totals do not. Reports started via HTTP were stopped by the real `/mnp stop` console command, and a second report was started by `/mnp start 30` and stopped via HTTP. Both reports remained unchanged after further traffic and a real Velocity restart. A separate run without PacketEvents also passed transport accounting and clean shutdown. There was no backend traffic to include in these tests.
+Recorded complete passes:
 
-After a reported `Can't unwrap foreign channel initializer` shutdown warning, the native wrapper was changed to expose its mutable delegate to PacketEvents. Regression tests use PacketEvents' actual field-lookup helper and ensure shutdown never resurrects its already-removed initializer or overwrites a later plugin. All four real capture variants and the standalone run passed again; the smoke now explicitly rejects PacketEvents uninject warnings instead of relying only on process exit. Modded registry failures in PacketEvents' own `InternalPacketListener` are a separate unresolved compatibility limitation; see [instrumentation](instrumentation.md#modded-registry-compatibility).
+| Hosted runtime | Transport provider | Log |
+| --- | --- | --- |
+| Node | Native + external PacketEvents analysis | `/tmp/opencode/velocity-profiler-vykvq2wc/smoke.log` |
+| Local Wrangler / Durable Objects | Native + external PacketEvents analysis | `/tmp/opencode/velocity-profiler-33rcbo2_/smoke.log` |
 
-Browser checks against the real embedded dashboard verified a connected stream, growing totals, two chart series, HTTP history, bytes/bits, dark/light, individual series hiding and pause/resume while API sequences continued increasing. At 390 px viewport width, the page had no horizontal overflow. These checks do not establish full gameplay compatibility or performance at scale. Windows/macOS runtime/build validation is not yet recorded.
+After the complete VNP rename, the clean build and Cloudflare dry-run passed again. The Node/Velocity capture-and-restart smoke also passed (`/tmp/opencode/velocity-profiler-qms_1jlw/smoke.log`), exercising plugin ID `vnp`, `plugins/vnp`, `/vnp` commands and the renamed authentication headers. The packaged entry point is `dev.vegui.vnp.velocity.VeguiNetworkProfilerPlugin`.
 
-Packet-report browser checks used actual status traffic: Start analysis opened a live report; packet bytes/counts grew, direction tabs changed the percentage denominator, and Stop & save report produced an immutable completed report. Direct report URL refresh worked. At 390 px width, the table scrolled inside its card without horizontal page overflow. No browser console errors or warnings were observed during these checks.
+`tools/smoke_attribution.py` also passed through the Node relay (`/tmp/opencode/velocity-attribution-112cga41/smoke.log`). It uses two minimal Python TCP backend protocol peers and offline protocol-47 clients Alice/Bob, **not full Minecraft server distributions**. It verifies lobby login, real `/server survival` transfer, historical attribution, SERVER exclusion, physical CONNECTION auto-stop, PLAYER capture across two reconnect IDs, global/local real player counts, saved timelines and settings. No EULA is accepted. Statistics use a one-second interval only in this isolated test configuration; the production default remains 30 seconds.
 
-### Association and scoped-capture smoke
+Useful commands (supply your own pinned distribution files):
 
-`tools/smoke_attribution.py` uses the same actual Velocity and PacketEvents distributions, with two minimal Python TCP backend protocol peers and offline protocol-47 clients Alice/Bob. These are test peers, **not full Minecraft server distributions**; no EULA is accepted. The test shortens statistics publication to one second only in its isolated configuration (production default remains 30 seconds).
+```sh
+python3 tools/smoke_velocity.py --velocity-jar /path/velocity.jar --plugin profiler-platforms/velocity/build/libs/vegui-network-profiler-velocity-0.1.0.jar --packetevents /path/packetevents.jar --packet-capture
+# Add --cloudflare for local Wrangler, --proxy-protocol for PROXY headers,
+# or --channel-provider packetevents to exercise alternate discovery.
+python3 tools/smoke_attribution.py --velocity-jar /path/velocity.jar --plugin profiler-platforms/velocity/build/libs/vegui-network-profiler-velocity-0.1.0.jar --packetevents /path/packetevents.jar
+```
 
-Recorded PASS on the final artifact, log `/tmp/opencode/velocity-attribution-alfgpyjo/smoke.log`:
+Earlier embedded-HTTP releases passed both discovery providers with/without PROXY protocol and standalone transport without PacketEvents. Those results are historical, not a claim that every combination has been repeated for the new hosted architecture. The former embedded HTTP/WebSocket tests were replaced by local service tests, relay authorization/state tests and the real Node/Wrangler integration runs above.
 
-- Actual login associates the client connection/player with lobby.
-- The real `/server survival` command completes a transfer. A PLAYER capture retains lobby and survival observations under the same physical ID/UUID without moving earlier bytes.
-- A SERVER survival capture excludes Bob's lobby traffic.
-- A CONNECTION capture completes when Alice physically disconnects.
-- A PLAYER Bob capture survives disconnect/reconnect and contains two different physical IDs under one UUID.
-- Published server counters contain real observed bytes, complete coverage and zero observation errors. Completed historic reports remain unchanged; shutdown closes the HTTP port and has no PacketEvents uninject warning.
+### Browser acceptance
 
-Browser checks on a live attribution smoke exercised Servers → Details → Start analysis (confirmed SERVER scope), Stop & save, direct report refresh, historical lobby/survival shares (85 B / 79 B in that run), server filtering that updates packet totals, and the 390 px layout without horizontal page overflow. No console errors/warnings were observed during the completed checks. Active/recent connection states are published snapshots, not instantaneous UI presence.
+Against the final JAR, Node relay and Astro build, an independent browser initially saw only the approval gate. Real `/vnp trustSession` approval opened Overview automatically. Starting and stopping a capture through the browser produced a completed 30-packet, 1,206-byte report with saved timeline. Direct Settings navigation and saving separate 100/50 Mbps references succeeded.
 
-### Timeline, population and shared settings
+Stopping only Minecraft left the hosted dashboard running: it showed the disconnected warning and expiry, retained 93 measured samples without inventing zeros, disabled capture mutations, and kept graph controls usable. Reloading the page while Minecraft remained offline recovered the same temporary history from the backend using the approved browser cookie. At 390 px width there was no horizontal page overflow. Local service requests correctly returned 503 while offline; this is not a zero-console-error claim. Isolated logs: `/tmp/opencode/remote-browser-_b459kwe/`. All test harness processes were stopped afterward.
 
-Additional tests cover real elapsed/final partial intervals, idle zeros, weighted means, min/max and filtering, history budgets with explicit gaps, immutable transfer populations, schema-1/2 absence of history, schema-3 checkpoint recovery, settings validation/atomic persistence/failed-save preservation, CSRF/foreign Origin rejection, and Mbps-to-byte reference conversion without graph clipping. A Velocity adapter test verifies pre-login tracked sockets do not increase player counts and that sampled current-server maps follow transfers/disconnects independently of historical byte attribution.
+## Performance boundaries
 
-The updated real attribution smoke passed with log `/tmp/opencode/velocity-attribution-cb3o427x/smoke.log`: schema-3 timeline deltas sum to final capture bytes; Alice's local population follows lobby → survival; global counts grow from one to two real logged-in test clients; server scope observes one player per backend; Overview count falls after disconnect. Saving independent 100/50 Mbps references produces matching API and atomic disk contents.
+`./gradlew :profiler-core:benchmarkCapture` is an optional warmed synthetic core-only probe. Previous runs varied substantially under concurrent build load. It excludes PacketEvents buffers/events, relay persistence/egress, full gameplay and the UI; no TPS/overhead or thousand-connection guarantee follows from it. Cloudflare heartbeats and retained samples incur operations and storage writes: measure real deployment cost and load, apply registration rate limits/quotas, and test slow-client behavior.
 
-All four real status/capture variants passed again with schema-3 delta reconciliation, zero players for status-only sockets, immutable report timelines and 100/50 settings surviving actual proxy restart. Logs: native `/tmp/opencode/velocity-profiler-ex8mvxit/smoke.log`, native + PROXY `velocity-profiler-bdbvu6l0/smoke.log`, PacketEvents `velocity-profiler-gajo9sx8/smoke.log`, PacketEvents + PROXY `velocity-profiler-rso19tkl/smoke.log` (all under `/tmp/opencode`). Standalone without PacketEvents also passed (`velocity-profiler-t1qt4faa/smoke.log`). All shut down cleanly without PacketEvents uninject warnings.
+## Separate manual acceptance
 
-Browser checks against that actual proxy verified four graph series on a saved PLAYER report, historical server filtering that changes curves/totals/statistics together (164 B → 79 B in this run), independent global/local populations, and live one-second rates. Settings loaded the saved 100/50 values and successfully disabled both references through the UI/API. At 390 px width there was no horizontal page overflow. A final live stop click overlapped the smoke's timed shutdown and produced expected connection-refused errors; it is not claimed as a successful browser stop for this run. API/command finalization is separately tested.
+- [ ] Modern online-mode encryption, compression, chunks and full gameplay with actual clients/backends.
+- [ ] Required modded/translation/plugin combinations; PacketEvents registry limitations remain unresolved.
+- [ ] Successful, cancelled and failed modern backend transfers around configuration/JoinGame transitions.
+- [ ] Representative hundreds/thousands of connections, report sizes and slow browsers.
+- [ ] Real Cloudflare deployment, hibernation/eviction and network-failure behavior at production scale (local Wrangler is not that guarantee).
+- [ ] Windows/macOS runtime and build verification.
 
-### Limited core hot-path probe
-
-`./gradlew :profiler-core:benchmarkCapture` performs 200,000 warm-up observations followed by 1,000,000 measured observations per thread. It compares permanent statistics alone with statistics plus an attributed capture. A recorded run reported 12.98 / 19.75 ns per observation for statistics-only (one/eight threads) and 64.23 / 128.07 ns for statistics + capture; measured allocation rounded to 0.0000–0.0001 B per observation. A subsequent run alongside the clean build reported 46.92 / 70.15 ns and 96.29 / 260.84 ns respectively, with 0.0000–0.0003 B allocation. The variation illustrates why these are diagnostics, not overhead guarantees. Final capture counters included all 1.2 million / 9.6 million warm-up and measured observations.
-
-This is a warmed, synthetic **core-only diagnostic**, not a statistically rigorous end-to-end benchmark. It excludes PacketEvents event/buffer costs, pipeline lookup, persistence and the dashboard, and does not establish TPS impact or production overhead. PacketEvents has its own baseline overhead even while this profiler is not capturing. Repeat with representative gameplay, plugin combinations and connection counts before making scalability claims.
-
-## Full gameplay acceptance — separate manual requirement
-
-Use a permitted Minecraft backend and an actual client; status/ping cannot establish these results:
-
-- [ ] Login completes with online-mode encryption.
-- [ ] Movement and chunk loading increase both totals and produce live rates.
-- [ ] Compression enabled/disabled does not remove or duplicate the transport counter.
-- [ ] Backend transfers do not add a second copy of client traffic.
-- [ ] Disconnect/reconnect cleans up handlers and preserves session totals.
-- [ ] Reset changes session/history while pending writes cannot contaminate the new session.
-- [ ] Dashboard reconnects after proxy restart and discards the previous session.
-- [ ] A slow dashboard cannot cause unlimited pending messages.
-- [ ] Shutdown leaves no profiler threads or listening socket.
-- [ ] Required plugin combinations preserve the initializer and pipeline position.
-- [ ] Packet capture during login/configuration/play covers the expected real packet types with encryption/compression and the deployed translation/modification plugins.
-- [ ] Real modern backends: successful, cancelled and failed transfers preserve the expected association around configuration/JoinGame transitions.
-- [ ] Representative hundreds/thousands of connections validate configured bounds, observation overhead and dashboard/report usability.
-
-Do not mark unexecuted scenarios as passed. No overhead percentage or thousand-connection performance claim is made without representative benchmarks.
+Do not mark unexecuted scenarios as passed. Definitive reports/settings remain on Minecraft; backend retention tests cover only bounded temporary statistics and authorization metadata.
