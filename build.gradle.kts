@@ -2,7 +2,7 @@ plugins { base; alias(libs.plugins.shadow) apply false }
 
 allprojects {
     group = "dev.vegui.vnp"
-    version = "0.1.0"
+    version = providers.gradleProperty("releaseVersion").orElse(providers.gradleProperty("vnpVersion")).get()
     repositories {
         mavenCentral()
         maven("https://repo.papermc.io/repository/maven-public/")

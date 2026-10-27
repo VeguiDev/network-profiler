@@ -84,7 +84,7 @@ def exchange(mc_port, proxy_protocol=False, packets=None):
     return len(request) + len(ping), received + pong_bytes
 
 
-def shutdown(process, http_port, log_path):
+def shutdown(process, mc_port, log_path):
     if process.poll() is None:
         process.stdin.write("shutdown\n")
         process.stdin.flush()
@@ -98,7 +98,7 @@ def shutdown(process, http_port, log_path):
     assert "Failed to uninject during termination" not in log_path.read_text(), f"Initializer cleanup failed; see {log_path}"
     with socket.socket() as sock:
         sock.settimeout(1)
-        assert sock.connect_ex(("127.0.0.1", http_port)) != 0, "HTTP port still open"
+        assert sock.connect_ex(("127.0.0.1", mc_port)) != 0, "Minecraft port still open"
 
 
 def main():
@@ -123,7 +123,7 @@ def main():
     shutil.copy2(args.plugin, plugins / "vnp.jar")
     if args.packetevents:
         shutil.copy2(args.packetevents, plugins / "packetevents.jar")
-    mc_port, http_port = port(), port()
+    mc_port = port()
     with zipfile.ZipFile(args.velocity_jar) as jar:
         config = jar.read("default-velocity.toml").decode()
     import re
@@ -133,7 +133,7 @@ def main():
     (directory / "velocity.toml").write_text(config)
     data = plugins / "vnp"
     data.mkdir()
-    relay = HostedRelay(directory, http_port, args.cloudflare)
+    relay = HostedRelay(directory, args.plugin, args.cloudflare)
     (data / "config.yml").write_text(relay.config() + f"traffic:\n  channel-provider: {provider}\n")
     log_path = directory / "smoke.log"
     with log_path.open("w") as log:

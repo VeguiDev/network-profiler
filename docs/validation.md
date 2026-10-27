@@ -6,15 +6,17 @@ Run `./gradlew clean build --no-daemon` with JDK 21, JDK 25 and Node 24.15+. Thi
 
 Coverage includes:
 
-The final `./gradlew clean build --no-daemon` passed **53 Java, 25 frontend and 11 backend tests**. Cloudflare dry-run packaging also passed. The approximately 3.24 MB plugin JAR contains neither frontend resources nor Javalin/Jetty/servlet classes, and has no duplicate archive paths or bundled host APIs.
+The build-time-origin `./gradlew clean build --no-daemon` passed 54 Java tests; the subsequent release-workflow `./gradlew build --no-daemon` passed **55 Java, 25 frontend and 11 backend tests**. Cloudflare dry-run packaging also passed. The approximately 3.21 MB plugin JAR contains neither frontend resources nor Javalin/Jetty/servlet classes, and has no duplicate archive paths or bundled host APIs.
 
 - Transport accounting, session/reset isolation, capture concurrency/freeze, scoped attribution, transfers/reconnects, immutable reports and bounded schema-3 history.
 - Local service operation allowlisting, scope validation, full-denominator statistics pagination, settings validation/atomic persistence and failed-save preservation.
-- Private relay identity persistence, endpoint binding, invalid configuration and relay failures that do not stop local collection.
+- Private relay identity persistence, endpoint binding, invalid configuration and relay failures that do not stop local collection. Relay is opt-out; URLs are embedded at build time, and runtime YAML URL keys are rejected.
 - Unapproved browsers cannot read metrics; link possession does not authorize another browser. Approval codes are single-use and isolated by server.
 - Exact 40-minute expiry per viewer, reconnection only cancelling grace when both peers return, independent viewers, pending-code expiry, durable-state reconstruction and temporary-history cleanup.
 - Offline cached transport history without invented zeros, separate boot series, bounded chunked report responses, write failure without replay, Origin/CSRF rejection and bounded request bodies.
 - Astro approval gate, scoped deep links/API paths, remote CSRF, offline sample retention, boot changes clearing previous presentation, chart references and unknown relay gaps.
+
+Release automation additionally passed Actionlint and three Python version-resolution tests, including malformed/injection-like tags. Local builds for `0.2.0-rc.1` and the default `0.1.0` both passed adapter tests and packaging; each JAR's filename and generated Velocity descriptor matched the requested version, and both retained the official embedded relay origins. The default artifact was restored afterward. No GitHub Release was published during these checks.
 
 ## Recorded hosted-runtime checks — 2026-10-27
 
@@ -36,11 +38,17 @@ After the complete VNP rename, the clean build and Cloudflare dry-run passed aga
 Useful commands (supply your own pinned distribution files):
 
 ```sh
+VNP_RELAY_URL=http://127.0.0.1:18765 \
+  ./gradlew :profiler-platforms:velocity:shadowJar --no-daemon
 python3 tools/smoke_velocity.py --velocity-jar /path/velocity.jar --plugin profiler-platforms/velocity/build/libs/vegui-network-profiler-velocity-0.1.0.jar --packetevents /path/packetevents.jar --packet-capture
 # Add --cloudflare for local Wrangler, --proxy-protocol for PROXY headers,
 # or --channel-provider packetevents to exercise alternate discovery.
 python3 tools/smoke_attribution.py --velocity-jar /path/velocity.jar --plugin profiler-platforms/velocity/build/libs/vegui-network-profiler-velocity-0.1.0.jar --packetevents /path/packetevents.jar
 ```
+
+The scripts read their listen origin from the plugin's embedded build properties. They require an HTTP `127.0.0.1` origin with an explicit free port and the same public web origin; remote/official-origin JARs are refused before launching a backend. Runtime environment variables do not change that JAR. Rebuild without the URL variables to restore the official-origin artifact after testing.
+
+The build-time-origin smoke passed (`/tmp/opencode/velocity-profiler-06tj9dq0/smoke.log`) using a JAR compiled for loopback port 18765 while the running Java process had both URL variables deliberately set to port 1. Registration, browser approval, capture and report/settings persistence across an actual Velocity restart still used the embedded port. Separate generator checks rejected a non-TLS remote origin without changing the previous resource, accepted independent relay/web build variables, and restored the official origin incrementally. The final JAR embeds `https://networkprofiler.vegui.dev` for both URLs; the Cloudflare dry-run validates that origin and the configured account/custom domain without deploying.
 
 Earlier embedded-HTTP releases passed both discovery providers with/without PROXY protocol and standalone transport without PacketEvents. Those results are historical, not a claim that every combination has been repeated for the new hosted architecture. The former embedded HTTP/WebSocket tests were replaced by local service tests, relay authorization/state tests and the real Node/Wrangler integration runs above.
 

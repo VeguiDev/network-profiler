@@ -1,6 +1,6 @@
 # HTTPS ingress for the hosted Node service
 
-This ingress is for the **hosted Hono backend**, not Minecraft. The plugin has no HTTP listener. Keep Node at `127.0.0.1:3000`, set `PUBLIC_ORIGIN=https://vnp.vegui.dev` and restrict direct access to that port. Cloudflare deployments use their hosted endpoint instead.
+This ingress is for the **hosted Hono backend**, not Minecraft. The plugin has no HTTP listener. Keep Node at `127.0.0.1:3000`, set `PUBLIC_ORIGIN=https://networkprofiler.vegui.dev` and restrict direct access to that port. Cloudflare deployments use their hosted endpoint instead. A different domain requires a plugin built for that origin.
 
 ```nginx
 # In nginx's http context:
@@ -11,7 +11,7 @@ map $http_upgrade $connection_upgrade {
 
 server {
     listen 443 ssl;
-    server_name vnp.vegui.dev;
+    server_name networkprofiler.vegui.dev;
     ssl_certificate /path/to/fullchain.pem;
     ssl_certificate_key /path/to/privkey.pem;
 

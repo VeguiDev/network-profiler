@@ -33,7 +33,7 @@ public record ProfilerConfig(boolean enabled, int historySeconds, RelayOptions r
         var p = section(root, "profiler", Set.of("enabled", "sampling-interval-ms", "history-duration-seconds"));
         var h = section(root, "http", Set.of("enabled", "host", "port", "allowed-hosts", "allowed-origins", "max-websocket-clients", "public-base-url"));
         // Legacy HTTP keys are accepted for upgrades, but never open a listener or define relay credentials.
-        var r = section(root, "relay", Set.of("enabled", "endpoint", "public-web-url"));
+        var r = section(root, "relay", Set.of("enabled"));
         var t = section(root, "traffic", Set.of("enabled", "track-inbound", "track-outbound", "channel-provider"));
         var c = section(root, "captures", Set.of("enabled", "max-duration-seconds", "max-reports", "retention-days", "max-attribution-rows", "max-timeline-entries", "max-timeline-samples"));
         var s = section(root, "statistics", Set.of("enabled", "interval-seconds", "max-connections", "max-servers", "disconnected-retention-seconds"));
@@ -42,8 +42,7 @@ public record ProfilerConfig(boolean enabled, int historySeconds, RelayOptions r
         String provider = text(t, "channel-provider", "native");
         if (!Set.of("native", "packetevents").contains(provider)) throw new IllegalArgumentException("Unknown channel-provider: " + provider);
         return new ProfilerConfig(bool(p, "enabled", true), integer(p, "history-duration-seconds", 900, 1, 86400),
-                new RelayOptions(bool(r, "enabled", true), java.net.URI.create(text(r, "endpoint", "https://vnp.vegui.dev")),
-                        java.net.URI.create(text(r, "public-web-url", "https://vnp.vegui.dev"))),
+                RelayBuildConfiguration.options(bool(r, "enabled", true)),
                 bool(t, "enabled", true), bool(t, "track-inbound", true), bool(t, "track-outbound", true), provider,
                 bool(c, "enabled", true), new CaptureOptions(integer(c, "max-reports", 50, 1, 1000),
                  integer(c, "retention-days", 7, 1, 365), integer(c, "max-duration-seconds", 900, 1, 86400),

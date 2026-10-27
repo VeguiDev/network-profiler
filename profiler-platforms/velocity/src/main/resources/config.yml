@@ -4,10 +4,9 @@ profiler:
   history-duration-seconds: 900
 
 relay:
+  # Outgoing relay is enabled by default. Set false to disable remote access.
+  # Relay/web URLs are compiled into the JAR, not configurable here.
   enabled: true
-  # Outgoing only. Host the Hono relay and Astro web on this origin.
-  endpoint: "https://vnp.vegui.dev"
-  public-web-url: "https://vnp.vegui.dev"
 
 traffic:
   enabled: true

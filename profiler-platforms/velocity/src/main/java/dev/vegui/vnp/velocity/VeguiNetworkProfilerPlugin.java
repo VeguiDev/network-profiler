@@ -23,7 +23,7 @@ import org.slf4j.Logger;
 import java.nio.file.Path;
 import java.util.Set;
 
-@Plugin(id = "vnp", name = "Vegui Network Profiler", version = "0.1.0",
+@Plugin(id = "vnp", name = "Vegui Network Profiler", version = PluginBuildVersion.VERSION,
         description = "Client-side transport traffic profiler", authors = {"VeguiDev"},
         dependencies = {@Dependency(id = "packetevents", optional = true)})
 public final class VeguiNetworkProfilerPlugin {
@@ -80,7 +80,7 @@ public final class VeguiNetworkProfilerPlugin {
                     }
                 };
                 try {
-                    var service = new ProfilerService(profiler, platform, "0.1.0", captures, statistics,
+                    var service = new ProfilerService(profiler, platform, PluginBuildVersion.VERSION, captures, statistics,
                             () -> packetProvider != null && packetProvider.available(), new dev.vegui.vnp.server.DashboardSettings(directory.resolve("dashboard-settings.json")));
                     relay = new RelayClient(config.relay(), directory.resolve("relay-identity.json"), profiler, service, logger::warn);
                     relay.start();

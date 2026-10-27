@@ -32,10 +32,27 @@ profiler-platforms/velocity/build/libs/vegui-network-profiler-velocity-0.1.0.jar
 
 Install **this JAR**, not the `-thin` or `-sources` artifacts. It does not contain the dashboard, Javalin or Jetty. The shared modules target Java 21 and the Velocity adapter targets Java 25. Dependencies are pinned in the Gradle catalog and each npm lockfile. Astro assets are in `profiler-web/dist/`. See [hosted deployment](docs/hosting.md) for Node and Cloudflare Workers + Durable Objects.
 
+Official builds embed `https://networkprofiler.vegui.dev` for both the relay and dashboard. URLs are build-time settings, not runtime configuration. Custom builds can set `VNP_RELAY_URL` and optionally `VNP_PUBLIC_WEB_URL` in the environment **when running Gradle**; the latter defaults to the relay URL. CI explicitly pins both to the official origin. Setting these variables when starting Minecraft does not change an existing JAR.
+
+### Automated builds and releases
+
+GitHub Actions validates pushes, pull requests and manual runs, and saves installable plugin JARs as artifacts. The adapter matrix currently includes **Velocity only**; add another entry to `.github/workflows/build.yml` when its adapter is implemented. This does not imply support for unimplemented Minecraft platforms.
+
+Pushing a semantic-version tag such as `v0.2.0` runs all checks, builds every listed adapter and publishes a GitHub Release with their installable JARs, SHA-256 checksums and generated release notes. Tags such as `v0.2.0-rc.1` publish prereleases. Failed checks prevent publication; ordinary pushes never publish releases. No Cloudflare deployment is performed.
+
+After committing and pushing the desired changes, publish a version with:
+
+```sh
+git tag -a v0.2.0 -m "VNP 0.2.0"
+git push origin v0.2.0
+```
+
+The tag sets both artifact names and the embedded plugin/API version. Local builds default to `vnpVersion` in `gradle.properties`; `./gradlew build -PreleaseVersion=0.2.0` reproduces a release version locally. The workflow needs no personal token: only the release job receives `contents: write` through `GITHUB_TOKEN`. A failed asset upload leaves a draft rather than publishing an incomplete release; inspect/remove that draft before rerunning the release job. Existing releases are not overwritten.
+
 ## Install and open the dashboard
 
-1. Deploy the hosted backend/dashboard at your HTTPS origin, for example `https://vnp.vegui.dev` (not a bundled public service).
-2. Stop Velocity, install the JAR and configure `relay.endpoint` and `relay.public-web-url` for that origin.
+1. Official JARs target `https://networkprofiler.vegui.dev`; this hosted service must be deployed separately. To self-host elsewhere, build your own JAR with the build-time URL variables described above.
+2. Stop Velocity and install the JAR. Relay access is enabled by default; no URL configuration is needed or accepted in YAML.
 3. Start Velocity with Java 25+. Registration runs asynchronously and saves a private `relay-identity.json`; relay outages never stop local collection.
 4. Run `/vnp dashboard`, open the generated link, then approve **that browser** with `/vnp trustSession <code>` shown on its pending page.
 5. The approved browser can read metrics/reports, start/stop captures and edit Settings. A different browser needs its own approval, even with the same link.
@@ -65,8 +82,6 @@ profiler:
   history-duration-seconds: 900
 relay:
   enabled: true
-  endpoint: "https://vnp.vegui.dev"
-  public-web-url: "https://vnp.vegui.dev"
 traffic:
   enabled: true
   track-inbound: true
@@ -92,12 +107,12 @@ statistics:
 - History accepts 1–86,400 seconds; default 900. Both sample capacity and elapsed retention are bounded. No backfilled/fabricated samples after scheduler delays.
 - Unknown keys, duplicate YAML keys, unsafe YAML tags, invalid types and out-of-range values are rejected.
 - Disabled directions have `available: false` and null values, not misleading zero values. Combined totals are unavailable when either direction is disabled.
-- `relay.enabled: false` leaves collection and local commands active without remote access. Legacy known `http` keys are accepted for migration but ignored: they no longer open a listener. Replace that section with `relay`.
+- `relay.enabled` defaults to `true`; set it to `false` to leave collection and local commands active without remote access. `relay.endpoint` and `relay.public-web-url` are rejected: remove those keys from older configurations. Legacy known `http` keys are accepted for migration but ignored: they no longer open a listener. Replace that section with `relay`.
 - An incompatible integration is explicitly unhealthy; inspect console logs and `/api/v1/status` when available.
 - Capture duration accepts 1–86,400 seconds; saved report count 1–1,000; retention 1–365 days. Reports live in `plugins/vnp/reports/` as versioned JSON, at most 32 MiB each. Count/age limits also apply to disk files and active checkpoints. Attribution is capped at 1–20,000 dimension/type rows; hitting the cap preserves capture totals but explicitly marks attribution incomplete.
 - Lightweight statistics count protocol bytes continuously and publish interval averages every 30 seconds by default (configurable 1–300). Limits: 1–100,000 active/recent connections, 1–10,000 server identities, and 0–86,400 seconds of disconnected retention. Closed connections are published one final time before pruning. Limits or observation failures mark coverage incomplete rather than inventing data. These statistics are in memory, not automatic persisted reports.
 - Capture timelines sample every second, plus the final partial interval. They retain at most `max-timeline-samples` points (2–86,402) and `max-timeline-entries` sparse dimension/population entries (1–20,000). Reaching a limit marks history incomplete without stopping cumulative counters. Missing coverage is shown as unknown/gaps, never fabricated zero traffic. Unchanged population maps are stored once and carried forward.
-- Relay URLs must be HTTPS origins without credentials, query or subpath; HTTP is allowed only on loopback for development. Serve the API and Astro assets on the same public origin. The private identity file binds credentials to the relay endpoint; an endpoint change or corrupt identity is explicitly refused rather than silently replacing credentials. Back it up privately; deliberate migration requires provisioning a new identity while retaining local report/settings files.
+- Build-time relay URLs must be HTTPS origins without credentials, query or subpath; HTTP is allowed only on loopback for development. Serve the API and Astro assets on the same public origin. The private identity file binds credentials to the relay endpoint; switching to a JAR built for another endpoint or a corrupt identity is explicitly refused rather than silently replacing credentials. Back it up privately; deliberate migration requires provisioning a new identity while retaining local report/settings files.
 
 ## What IN and OUT mean
 
@@ -192,7 +207,7 @@ npm ci
 PUBLIC_ORIGIN=http://127.0.0.1:3000 npm start
 ```
 
-For this loopback setup use the same origin in the plugin's relay URLs. `npm run dev:cloudflare` runs the Durable Object adapter locally; see [hosting](docs/hosting.md) for its origin override. Astro dev alone is a UI shell, not a relay. Plugin-only packaging is independent: `./gradlew :profiler-platforms:velocity:shadowJar`.
+For this loopback setup **build** the plugin with `VNP_RELAY_URL=http://127.0.0.1:3000`; the public web URL defaults to the same value. `npm run dev:cloudflare` runs the Durable Object adapter locally; see [hosting](docs/hosting.md) for its origin override. Astro dev alone is a UI shell, not a relay. Plugin-only packaging is independent: `./gradlew :profiler-platforms:velocity:shadowJar`.
 
 ```sh
 ./gradlew check
@@ -203,12 +218,14 @@ For this loopback setup use the same origin in the plugin's relay URLs. `npm run
 For the actual shaded JAR against the pinned Velocity distribution:
 
 ```sh
+VNP_RELAY_URL=http://127.0.0.1:18765 \
+  ./gradlew :profiler-platforms:velocity:shadowJar --no-daemon
 python3 tools/smoke_velocity.py \
   --velocity-jar /path/to/velocity-4.3.0-44.jar \
   --plugin profiler-platforms/velocity/build/libs/vegui-network-profiler-velocity-0.1.0.jar
 ```
 
-The script starts an isolated Node relay and real loopback Velocity, registers the plugin, creates a browser session, verifies pending reads are forbidden, approves it through the console, then compares exact Minecraft status/ping IN/OUT totals. Add `--cloudflare` to use Wrangler locally, `--proxy-protocol`, or `--packetevents /path/to/packetevents-velocity-2.14.0.jar`. Add `--packet-capture` with PacketEvents for exact type counts, shared command/remote capture controls, immutable reports and report/Settings persistence across a real restart. It does not accept an EULA or start a full backend.
+The script reads the compiled loopback origin from the JAR and starts its isolated relay on that port; it refuses official/remote-origin JARs to avoid contacting the public service. It starts real loopback Velocity, registers the plugin, creates a browser session, verifies pending reads are forbidden, approves it through the console, then compares exact Minecraft status/ping IN/OUT totals. Add `--cloudflare` to use Wrangler locally, `--proxy-protocol`, or `--packetevents /path/to/packetevents-velocity-2.14.0.jar`. Add `--packet-capture` with PacketEvents for exact type counts, shared command/remote capture controls, immutable reports and report/Settings persistence across a real restart. It does not accept an EULA or start a full backend. Rebuild without the URL variables before distributing an official-origin JAR.
 
 `tools/smoke_attribution.py` accepts the same three JAR arguments and exercises actual offline login, a successful lobby → survival transfer, scoped exclusion, physical disconnect finalization and player reconnect tracking against two minimal protocol backend peers. It does not start full Minecraft servers or accept an EULA; modern online-mode/gameplay compatibility still requires manual testing.
 

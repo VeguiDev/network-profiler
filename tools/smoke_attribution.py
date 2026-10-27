@@ -126,7 +126,7 @@ def main():
     shutil.copy2(args.plugin, plugins / 'profiler.jar')
     shutil.copy2(args.packetevents, plugins / 'packetevents.jar')
     lobby, survival = Backend('lobby'), Backend('survival')
-    mc_port, http_port = port(), port()
+    mc_port = port()
     with zipfile.ZipFile(args.velocity_jar) as jar:
         config = jar.read('default-velocity.toml').decode()
     config = re.sub(r'^bind = .*$', f'bind = "127.0.0.1:{mc_port}"', config, flags=re.M)
@@ -141,7 +141,7 @@ def main():
     data = plugins / 'vnp'
     data.mkdir()
     # Shortened publication interval for tests only; production default remains 30s.
-    relay = HostedRelay(directory, http_port, args.cloudflare)
+    relay = HostedRelay(directory, args.plugin, args.cloudflare)
     (data / 'config.yml').write_text(relay.config() + 'statistics:\n  interval-seconds: 1\n')
 
     def wait(action, message, timeout=15):

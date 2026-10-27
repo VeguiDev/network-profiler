@@ -1,10 +1,40 @@
-name: Build
-on: [push, pull_request]
+name: Build and release
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
 permissions:
   contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
-  build:
+  version:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        name: Resolve and validate version
+        env:
+          BUILD_REF: ${{ github.ref }}
+        run: python3 tools/ci_version.py
+
+  validate:
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      ORG_GRADLE_PROJECT_releaseVersion: ${{ needs.version.outputs.version }}
+      VNP_RELAY_URL: https://networkprofiler.vegui.dev
+      VNP_PUBLIC_WEB_URL: https://networkprofiler.vegui.dev
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -21,14 +51,87 @@ jobs:
             profiler-web/package-lock.json
             profiler-backend/package-lock.json
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew build
+      - run: python3 -m unittest discover -s tools -p 'test_ci_version.py'
+      - run: ./gradlew build --no-daemon
       - run: npm run check:cloudflare
         working-directory: profiler-backend
       - uses: actions/upload-artifact@v4
         with:
-          name: velocity-plugin
-          path: profiler-platforms/velocity/build/libs/vegui-network-profiler-velocity-0.1.0.jar
-      - uses: actions/upload-artifact@v4
-        with:
           name: hosted-dashboard
           path: profiler-web/dist
+          if-no-files-found: error
+
+  plugins:
+    needs: version
+    name: Plugin / ${{ matrix.platform }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Add only implemented adapters here, with their Gradle project and JAR directory.
+        include:
+          - platform: velocity
+            project: ':profiler-platforms:velocity'
+            directory: profiler-platforms/velocity
+    env:
+      ORG_GRADLE_PROJECT_releaseVersion: ${{ needs.version.outputs.version }}
+      VNP_RELAY_URL: https://networkprofiler.vegui.dev
+      VNP_PUBLIC_WEB_URL: https://networkprofiler.vegui.dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            21
+            25
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test and package adapter
+        env:
+          GRADLE_PROJECT: ${{ matrix.project }}
+        run: ./gradlew "${GRADLE_PROJECT}:test" "${GRADLE_PROJECT}:shadowJar" --no-daemon
+      - name: Collect installable JAR only
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          PLATFORM_DIRECTORY: ${{ matrix.directory }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir -p release-artifacts
+          jar="${PLATFORM_DIRECTORY}/build/libs/vegui-network-profiler-${PLATFORM}-${VERSION}.jar"
+          test -f "$jar"
+          cp "$jar" release-artifacts/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-${{ matrix.platform }}
+          path: release-artifacts/*.jar
+          if-no-files-found: error
+
+  release:
+    name: Publish tagged release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [version, validate, plugins]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: plugin-*
+          merge-multiple: true
+          path: release-artifacts
+      - name: Generate checksums
+        working-directory: release-artifacts
+        run: sha256sum ./*.jar > SHA256SUMS.txt
+      - name: Create draft with assets, then publish
+        run: |
+          args=(--verify-tag --generate-notes --draft --title "VNP ${RELEASE_TAG}")
+          if [ "$PRERELEASE" = true ]; then
+            args+=(--prerelease --latest=false)
+          fi
+          gh release create "$RELEASE_TAG" release-artifacts/*.jar release-artifacts/SHA256SUMS.txt "${args[@]}"
+          gh release edit "$RELEASE_TAG" --draft=false

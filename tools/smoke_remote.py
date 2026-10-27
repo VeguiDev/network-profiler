@@ -9,13 +9,23 @@ import subprocess
 import time
 import urllib.request
 import urllib.error
+import urllib.parse
+import zipfile
 
 REPO = Path(__file__).resolve().parent.parent
 
 
 class HostedRelay:
-    def __init__(self, directory, port, cloudflare=False):
-        self.root = f'http://127.0.0.1:{port}'
+    def __init__(self, directory, plugin, cloudflare=False):
+        # Test a custom-compiled loopback JAR, never redirect or contact the official service.
+        with zipfile.ZipFile(plugin) as jar:
+            values = dict(line.split('=', 1) for line in jar.read('vnp-relay.properties').decode().splitlines() if line and not line.startswith('#'))
+        self.root = values['endpoint']
+        origin = urllib.parse.urlsplit(self.root)
+        if (origin.scheme != 'http' or origin.hostname != '127.0.0.1' or not origin.port
+                or values['public-web-url'] != self.root):
+            raise ValueError('Smoke tests require a JAR compiled with VNP_RELAY_URL=http://127.0.0.1:<free-port> and the same VNP_PUBLIC_WEB_URL')
+        port = origin.port
         self.directory = directory
         self.log = (directory / 'relay.log').open('w')
         env = dict(os.environ, PUBLIC_ORIGIN=self.root, PORT=str(port), HOST='127.0.0.1', DATA_DIRECTORY=str(directory / 'relay-data'), WRANGLER_SEND_METRICS='false')
@@ -38,7 +48,7 @@ class HostedRelay:
         raise RuntimeError('Relay startup timeout: ' + str(directory / 'relay.log'))
 
     def config(self):
-        return f'relay:\n  endpoint: "{self.root}"\n  public-web-url: "{self.root}"\n'
+        return 'relay:\n  enabled: true\n'
 
     def close(self):
         if self.log.closed:
