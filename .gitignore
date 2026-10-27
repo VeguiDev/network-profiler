@@ -4,6 +4,7 @@
 **/node_modules/
 profiler-web/dist/
 profiler-backend/dist/
+/dist/
 profiler-web/.astro/
 **/.wrangler/
 profiler-backend/data/

@@ -1,0 +1,16 @@
+{
+  "name": "vegui-network-profiler",
+  "version": "0.1.0",
+  "private": true,
+  "engines": { "node": ">=24.15.0" },
+  "scripts": {
+    "install:apps": "node tools/npm-app.mjs profiler-web ci --include=dev --no-audit --no-fund && node tools/npm-app.mjs profiler-backend ci --include=dev --no-audit --no-fund",
+    "build:web": "node tools/npm-app.mjs profiler-web run build",
+    "build:api": "node tools/npm-app.mjs profiler-backend run build",
+    "build": "npm run build:web && npm run build:api",
+    "build:cloudflare": "npm run install:apps && npm run build && npm run check:cloudflare",
+    "check:cloudflare": "node tools/npm-app.mjs profiler-backend run check:cloudflare",
+    "deploy:cloudflare": "node tools/npm-app.mjs profiler-backend run deploy:cloudflare",
+    "test": "node tools/npm-app.mjs profiler-web test && node tools/npm-app.mjs profiler-backend test"
+  }
+}

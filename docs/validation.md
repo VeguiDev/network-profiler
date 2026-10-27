@@ -2,7 +2,9 @@
 
 ## Automated checks
 
-Run `./gradlew clean build --no-daemon` with JDK 21, JDK 25 and Node 24.15+. This builds the Velocity JAR, Astro static dashboard and Hono backend independently. It runs Java core/Netty/service/relay/configuration tests, frontend tests, backend security tests and TypeScript checks. `npm run check:cloudflare` in `profiler-backend` additionally validates Workers/Durable Objects packaging without deploying.
+Run `./gradlew clean build --no-daemon` with JDK 21, JDK 25 and Node 24.15+. This builds the Velocity JAR, Astro static dashboard and Hono backend independently. It runs Java core/Netty/service/relay/configuration tests, frontend tests, backend security tests and TypeScript checks. `npm run check:cloudflare` from the repository root additionally validates Workers/Durable Objects packaging without deploying, using the root `wrangler.jsonc` and the Wrangler version pinned in `profiler-backend`.
+
+For the hosted apps alone, run `npm run build:cloudflare` from the repository root. This performs locked dependency installation, Astro build, Hono type-checking and Wrangler dry-run packaging without requiring Java or deploying. After installation, root `npm test` runs frontend/backend tests. `npm run deploy:cloudflare` is deliberately separate and must not be run as a validation step. The root commands passed locally: installs completed, Astro emitted the static dashboard, Hono type-checking passed, Wrangler 4.153.0 dry-run packaged the Worker, Durable Object and six assets, and `npm test` passed 25 frontend and 11 backend tests. npm reported non-blocking `allowScripts` warnings for esbuild/workerd install hooks; both tools worked without approving them.
 
 Coverage includes:
 

@@ -7,10 +7,8 @@ The plugin is an **outgoing client**, not a web server. Deploy Hono and the Astr
 Requirements: Node 24.15+, npm, persistent private disk. From the repository:
 
 ```sh
-npm ci --prefix profiler-web
-npm run build --prefix profiler-web
-npm ci --prefix profiler-backend
-npm run build --prefix profiler-backend
+npm run install:apps
+npm run build
 cd profiler-backend
 PUBLIC_ORIGIN=https://networkprofiler.vegui.dev HOST=127.0.0.1 PORT=3000 DATA_DIRECTORY=/var/lib/vnp npm start
 ```
@@ -27,15 +25,35 @@ Local development may use `PUBLIC_ORIGIN=http://127.0.0.1:3000` and a plugin **b
 
 The same business logic runs in a Worker with one `ServerRelay` Durable Object per registered server. Ordinary Worker memory is not the session database. Native hibernatable sockets restore role/boot attachments, durable storage retains authorization/deadlines and bounded samples, and alarms enforce cleanup even without an incoming request. Every operation also checks expiry; delayed/repeated alarms do not grant extra access.
 
-Build Astro and install backend dependencies as above. `profiler-backend/wrangler.jsonc` is configured for account `1320cf26a557b8a80feb8a3f7349c6e5`, custom domain `networkprofiler.vegui.dev` and matching `vars.PUBLIC_ORIGIN`. The domain's zone must be active in that account and Wrangler must be authenticated with deployment permissions. For another deployment, change those values and compile a matching plugin. Keep the `SERVERS` binding, SQLite Durable Object migration and `ASSETS` binding/SPA fallback. Then, when you choose to deploy:
+`wrangler.jsonc` at the repository root is configured for the Worker `network-profiler`, account `1320cf26a557b8a80feb8a3f7349c6e5`, custom domain `networkprofiler.vegui.dev` and matching `vars.PUBLIC_ORIGIN`. Its `main` and `ASSETS` paths are relative to the repository root. The domain's zone must be active in that account and Wrangler must be authenticated with deployment permissions. For another deployment, change those values and compile a matching plugin. Keep the `SERVERS` binding, SQLite Durable Object migration and `ASSETS` binding/SPA fallback. From the repository root:
 
 ```sh
-cd profiler-backend
-npm run check:cloudflare
+npm run build:cloudflare
+# Only when you intend to deploy, with Wrangler authentication available:
 npm run deploy:cloudflare
 ```
 
-The check is a dry run; deploy changes your Cloudflare account and is not performed by ordinary Gradle builds. Wrangler authentication/account setup belongs to the deployment operator. API paths run the Worker first; other paths serve Astro assets with SPA fallback, including deep report/settings links.
+`build:cloudflare` installs web/backend dependencies using their committed lockfiles, builds Astro, type-checks Hono and runs Wrangler's dry-run packaging. It includes dev dependencies even if `NODE_ENV=production`, because Astro, TypeScript and Wrangler are build tools. It needs Node/npm, not a JDK or Gradle. It never deploys. `deploy:cloudflare` changes your Cloudflare account and uses the already built assets; it intentionally does not repeat the build. API paths run the Worker first; other paths serve Astro assets with SPA fallback, including deep report/settings links.
+
+### Cloudflare Git CI (Workers Builds)
+
+In **Workers & Pages**, connect the Git repository `VeguiDev/network-profiler` to the Worker **`network-profiler`**. Use Workers Builds, not a Pages project. If framework detection suggests Astro/Pages, override it with this Worker configuration:
+
+| Build setting | Value |
+| --- | --- |
+| Production branch | `master` |
+| Root directory | Repository root (`/`), not `profiler-web` or `profiler-backend` |
+| Build command | `npm run build:cloudflare` |
+| Deploy command | `npm run deploy:cloudflare` |
+| Node version | `.node-version` pins `24.18.0` (the Workers Builds default); remove conflicting `NODE_VERSION` overrides or use the same version |
+
+Root npm scripts enter `profiler-backend` for its pinned Wrangler binary, and the backend scripts pass `--config ../wrangler.jsonc`. The config lives at the repository root so Workers Builds discovers the same file directly; `main` and asset paths are root-relative. No global `npx wrangler` download or duplicate config is needed. Root dependency auto-installation is harmless: the root package has no dependencies, and the build script explicitly installs both apps. Keep the root `package-lock.json` and both app lockfiles committed. Do not set `ignore-scripts` for app installation; native build tooling may require installation hooks.
+
+Allow Workers Builds to create/select its deployment API token with access to the configured account, Worker, Durable Objects and custom domain. Do not put credentials in npm scripts or Git. No GitHub Actions secret is needed for Cloudflare's own Git integration. Keep `PUBLIC_ORIGIN` in Wrangler's runtime configuration; plugin `VNP_*` build variables are not needed for the web/API build.
+
+Disable non-production branch/preview deployments initially. Browser Origin checks and the official plugin target the production domain; previews need separate routing/origin/state design and are not configured by these scripts. If setting optional build watch paths, include `profiler-web/**`, `profiler-backend/**`, `wrangler.jsonc`, root `package.json`, `package-lock.json` and `.node-version`. Changes limited to Java do not require a web deployment.
+
+For local authentication before a manual deployment, run `npx wrangler login` and `npx wrangler whoami` from `profiler-backend`. Workers Builds supplies its own authentication; do not use interactive login in CI. A successful dry run validates packaging, not Cloudflare account permissions or live routing.
 
 For isolated local testing:
 

@@ -34,11 +34,23 @@ Install **this JAR**, not the `-thin` or `-sources` artifacts. It does not conta
 
 Official builds embed `https://networkprofiler.vegui.dev` for both the relay and dashboard. URLs are build-time settings, not runtime configuration. Custom builds can set `VNP_RELAY_URL` and optionally `VNP_PUBLIC_WEB_URL` in the environment **when running Gradle**; the latter defaults to the relay URL. CI explicitly pins both to the official origin. Setting these variables when starting Minecraft does not change an existing JAR.
 
+### Web + API in one command
+
+From the repository root with Node 24.15+:
+
+```sh
+npm run build:cloudflare
+```
+
+This installs both apps from their lockfiles (including build dependencies), compiles Astro and type-checks Hono, then packages the Worker, Durable Objects and assets in a **dry run**. It does not build the Java plugin or deploy anything. `npm run deploy:cloudflare` is the separate, authenticated deployment command. Configure Cloudflare's own Git CI with repository root `/`, build command `npm run build:cloudflare`, deploy command `npm run deploy:cloudflare` and production branch `master`; the root `wrangler.jsonc` defines the `network-profiler` Worker and assets. See [Workers Builds setup](docs/hosting.md#cloudflare-git-ci-workers-builds).
+
+For an incremental local build after installing dependencies, use `npm run build`; `npm test` runs both apps' tests. Java/plugin validation remains `./gradlew build`.
+
 ### Automated builds and releases
 
 GitHub Actions validates pushes, pull requests and manual runs, and saves installable plugin JARs as artifacts. The adapter matrix currently includes **Velocity only**; add another entry to `.github/workflows/build.yml` when its adapter is implemented. This does not imply support for unimplemented Minecraft platforms.
 
-Pushing a semantic-version tag such as `v0.2.0` runs all checks, builds every listed adapter and publishes a GitHub Release with their installable JARs, SHA-256 checksums and generated release notes. Tags such as `v0.2.0-rc.1` publish prereleases. Failed checks prevent publication; ordinary pushes never publish releases. No Cloudflare deployment is performed.
+Pushing a semantic-version tag such as `v0.2.0` runs all checks, builds every listed adapter and publishes a GitHub Release with their installable JARs, SHA-256 checksums and generated release notes. Tags such as `v0.2.0-rc.1` publish prereleases. Failed checks prevent publication; ordinary pushes never publish releases. This GitHub workflow does not deploy Cloudflare; Workers Builds is configured separately.
 
 After committing and pushing the desired changes, publish a version with:
 
