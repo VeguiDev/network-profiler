@@ -61,6 +61,42 @@ git push origin v0.2.0
 
 The tag sets both artifact names and the embedded plugin/API version. Local builds default to `vnpVersion` in `gradle.properties`; `./gradlew build -PreleaseVersion=0.2.0` reproduces a release version locally. The workflow needs no personal token: only the release job receives `contents: write` through `GITHUB_TOKEN`. A failed asset upload leaves a draft rather than publishing an incomplete release; inspect/remove that draft before rerunning the release job. Existing releases are not overwritten.
 
+### Shared Java libraries
+
+The same `v*` tag also publishes these Java 21 libraries to GitHub Packages under `dev.vegui.vnp`, before creating the GitHub Release:
+
+| Artifact | Maven coordinate |
+| --- | --- |
+| API contracts | `dev.vegui.vnp:profiler-api` |
+| Capture/statistics core | `dev.vegui.vnp:profiler-core` |
+| Netty transport adapter | `dev.vegui.vnp:profiler-netty` |
+| Local profiler services | `dev.vegui.vnp:profiler-server` |
+| Outgoing relay client | `dev.vegui.vnp:profiler-relay` |
+
+All five use the tag's version and publish normal, unshaded JARs, sources, Javadoc, POMs and Gradle module metadata. Project dependencies are transitive. The Velocity plugin adapter and empty platform aggregate are not libraries and are not published. These Java modules do not add Fabric/Forge/Architectury support; a separate future mod project can consume the platform-independent API/core where appropriate.
+
+For example, in a Gradle consumer, configure the repository and a release version:
+
+```kotlin
+repositories {
+    maven {
+        url = uri("https://maven.pkg.github.com/veguidev/network-profiler")
+        credentials {
+            username = providers.environmentVariable("GITHUB_ACTOR").orNull
+            password = providers.environmentVariable("GITHUB_TOKEN").orNull
+        }
+    }
+}
+
+dependencies {
+    implementation("dev.vegui.vnp:profiler-core:0.2.0")
+}
+```
+
+GitHub Packages reads require authentication, including in local builds. Use a **classic PAT** with `read:packages` and package/repository access, supplied through environment variables or your local Gradle user configuration; never commit it. In GitHub Actions, a consumer can use `GITHUB_TOKEN` with `packages: read` when the package grants that repository access. `profiler-netty` intentionally does not publish or force a Netty runtime version: its consumer must provide a compatible host Netty dependency (for example, from the Minecraft platform). Consumers that do not integrate with Netty can omit that artifact.
+
+The five package uploads are separate and GitHub Packages versions are immutable. If one upload fails after earlier modules succeeded, the workflow stops and does **not** create the GitHub Release. Inspect which coordinates were published; do not overwrite or blindly retry the same version. Publish a corrected, new semantic-version tag after resolving any partial publication.
+
 ## Install and open the dashboard
 
 1. Official JARs target `https://networkprofiler.vegui.dev`; this hosted service must be deployed separately. To self-host elsewhere, build your own JAR with the build-time URL variables described above.

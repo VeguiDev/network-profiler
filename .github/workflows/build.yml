@@ -113,17 +113,51 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: write
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ github.ref_name }}
       PRERELEASE: ${{ needs.version.outputs.prerelease }}
+      ORG_GRADLE_PROJECT_releaseVersion: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           pattern: plugin-*
           merge-multiple: true
           path: release-artifacts
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            21
+            25
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Publish profiler-api
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./gradlew :profiler-api:publishLibraryPublicationToGitHubPackagesRepository --no-daemon
+      - name: Publish profiler-core
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./gradlew :profiler-core:publishLibraryPublicationToGitHubPackagesRepository --no-daemon
+      - name: Publish profiler-netty
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./gradlew :profiler-netty:publishLibraryPublicationToGitHubPackagesRepository --no-daemon
+      - name: Publish profiler-server
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./gradlew :profiler-server:publishLibraryPublicationToGitHubPackagesRepository --no-daemon
+      - name: Publish profiler-relay
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./gradlew :profiler-relay:publishLibraryPublicationToGitHubPackagesRepository --no-daemon
       - name: Generate checksums
         working-directory: release-artifacts
         run: sha256sum ./*.jar > SHA256SUMS.txt

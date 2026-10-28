@@ -25,6 +25,73 @@ subprojects {
     tasks.withType<Test>().configureEach { useJUnitPlatform(); testLogging { events("failed", "skipped") } }
 }
 
+val publishedLibraryProjects = setOf(
+    ":profiler-api",
+    ":profiler-core",
+    ":profiler-netty",
+    ":profiler-server",
+    ":profiler-relay",
+)
+
+val verifyGitHubPackagesCredentials = tasks.register("verifyGitHubPackagesCredentials") {
+    group = "publishing"
+    description = "Fail before any GitHub Packages upload if publishing credentials are unavailable"
+    doLast {
+        if (providers.environmentVariable("GITHUB_ACTOR").orNull.isNullOrBlank() ||
+            providers.environmentVariable("GITHUB_TOKEN").orNull.isNullOrBlank()) {
+            throw GradleException("GitHub Packages publishing requires GITHUB_ACTOR and GITHUB_TOKEN")
+        }
+    }
+}
+
+subprojects {
+    if (path in publishedLibraryProjects) {
+        apply(plugin = "maven-publish")
+        extensions.configure<JavaPluginExtension> { withJavadocJar() }
+
+        extensions.configure<PublishingExtension> {
+            publications {
+                create<MavenPublication>("library") {
+                    from(components["java"])
+                    pom {
+                        name.set(project.name)
+                        description.set("Minecraft-independent shared library for Vegui Network Profiler")
+                        url.set("https://github.com/VeguiDev/network-profiler")
+                        licenses {
+                            license {
+                                name.set("GNU General Public License, version 3 or later")
+                                url.set("https://www.gnu.org/licenses/gpl-3.0.html")
+                                distribution.set("repo")
+                            }
+                        }
+                        scm {
+                            url.set("https://github.com/VeguiDev/network-profiler")
+                            connection.set("scm:git:https://github.com/VeguiDev/network-profiler.git")
+                            developerConnection.set("scm:git:ssh://git@github.com/VeguiDev/network-profiler.git")
+                        }
+                    }
+                }
+            }
+            repositories {
+                maven {
+                    name = "GitHubPackages"
+                    url = uri("https://maven.pkg.github.com/veguidev/network-profiler")
+                    credentials {
+                        username = providers.environmentVariable("GITHUB_ACTOR").orNull
+                        password = providers.environmentVariable("GITHUB_TOKEN").orNull
+                    }
+                }
+            }
+        }
+
+        tasks.withType<PublishToMavenRepository>().configureEach {
+            if (repository.name == "GitHubPackages") {
+                dependsOn(verifyGitHubPackagesCredentials)
+            }
+        }
+    }
+}
+
 fun npmCommand(vararg arguments: String): List<String> =
     (if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) listOf("cmd", "/c", "npm") else listOf("npm")) + arguments
 

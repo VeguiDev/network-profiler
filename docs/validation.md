@@ -8,7 +8,7 @@ For the hosted apps alone, run `npm run build:cloudflare` from the repository ro
 
 Coverage includes:
 
-The build-time-origin `./gradlew clean build --no-daemon` passed 54 Java tests; the subsequent release-workflow `./gradlew build --no-daemon` passed **55 Java, 25 frontend and 11 backend tests**. Cloudflare dry-run packaging also passed. The approximately 3.21 MB plugin JAR contains neither frontend resources nor Javalin/Jetty/servlet classes, and has no duplicate archive paths or bundled host APIs.
+The final `./gradlew clean build --no-daemon` passed **55 Java, 25 frontend and 11 backend tests**. Cloudflare dry-run packaging also passed. The approximately 3.21 MB plugin JAR contains neither frontend resources nor Javalin/Jetty/servlet classes, and has no duplicate archive paths or bundled host APIs.
 
 - Transport accounting, session/reset isolation, capture concurrency/freeze, scoped attribution, transfers/reconnects, immutable reports and bounded schema-3 history.
 - Local service operation allowlisting, scope validation, full-denominator statistics pagination, settings validation/atomic persistence and failed-save preservation.
@@ -19,6 +19,8 @@ The build-time-origin `./gradlew clean build --no-daemon` passed 54 Java tests; 
 - Astro approval gate, scoped deep links/API paths, remote CSRF, offline sample retention, boot changes clearing previous presentation, chart references and unknown relay gaps.
 
 Release automation additionally passed Actionlint and three Python version-resolution tests, including malformed/injection-like tags. Local builds for `0.2.0-rc.1` and the default `0.1.0` both passed adapter tests and packaging; each JAR's filename and generated Velocity descriptor matched the requested version, and both retained the official embedded relay origins. The default artifact was restored afterward. No GitHub Release was published during these checks.
+
+The five library publications were generated with `publishLibraryPublicationToMavenLocal` into the isolated `/tmp/opencode/vnp-maven-local` repository (not the user's global Maven cache or GitHub Packages). Normal JAR, sources, Javadoc, POM and Gradle module metadata were produced; API dependencies retain their declared scopes, and the Netty artifact does not impose a Netty runtime dependency. No Maven package or GitHub Release was actually published. Tag workflow permissions grant `packages: write` only to the release job; each package upload is a separate step, and GitHub Release creation occurs only after all five succeed.
 
 ## Recorded hosted-runtime checks — 2026-10-27
 
